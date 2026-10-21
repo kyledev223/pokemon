@@ -6,7 +6,6 @@ import type { CardListing, CardProvider } from './types';
  * Expected endpoints (adapt the paths/shapes to your vendor):
  *   POST {CARD_API_URL}/quote     { maxUsd }                 → CardListing | { listing: null }
  *   POST {CARD_API_URL}/purchase  { listingId, paymentSig }  → { mint }
- *   POST {CARD_API_URL}/transfer  { mint, wallet }           → { signature }
  * All requests carry `Authorization: Bearer ${CARD_API_KEY}`.
  */
 export class HttpCards implements CardProvider {
@@ -33,10 +32,5 @@ export class HttpCards implements CardProvider {
 
   async confirmPurchase(listing: CardListing, paymentSig: string): Promise<{ mint: string }> {
     return this.post('/purchase', { listingId: listing.listingId, paymentSig });
-  }
-
-  async transferToWinner(mint: string, wallet: string): Promise<string> {
-    const out = await this.post<{ signature: string }>('/transfer', { mint, wallet });
-    return out.signature;
   }
 }

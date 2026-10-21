@@ -1,35 +1,23 @@
 import type { Region } from './species';
 import type { SpawnInfo, Vec3 } from './world';
+import type { MyClaim, Tier, TierOdds } from './prizes';
 
+/** The real card currently loose on the island (one release of a catalog prize). */
 export interface PublicCard {
+  /** Release id: the `cardId` in the fair-roll HMAC message. */
   id: string;
+  prizeId: string;
   name: string;
   set: string;
   grade: string;
-  valueUsd: number;
+  tier: Tier;
   image: string;
-  species: number;
-  seed: number;
   releasedAt: number;
   commitment: string;
   memoSig: string;
+  odds: TierOdds;
   throws: number;
   nextOdds: number;
-}
-
-export interface WonCard {
-  id: string;
-  name: string;
-  set: string;
-  grade: string;
-  valueUsd: number;
-  image: string;
-  winnerName: string;
-  caughtAt: number;
-  throws: number;
-  transferSig: string | null;
-  memoSig: string;
-  purchaseSig: string | null;
 }
 
 export interface PlayerPos {
@@ -51,11 +39,17 @@ export interface Ball {
 
 export interface Economy {
   launched: boolean;
-  vaultUsd: number;
-  threshold: number;
   nextClaimAt: number;
   online: number;
   cardsCaught: number;
+  /** Next scheduled release (null when nothing is scheduled or the catalog shelf is empty). */
+  nextRelease: { at: number; tier: Tier } | null;
+  /** Cards still waiting in the catalog. */
+  prizesLeft: number;
+  /** Golden balls one trainer may pick up per rolling hour. */
+  goldPerHour: number;
+  /** Fee vault, only when VAULT_AUTO_BUY is on. */
+  vault: { usd: number; threshold: number } | null;
   /** Golden balls currently lying on the island. */
   balls: number;
   /** Trainers who completed the 30-species island dex, earliest first. */
@@ -83,8 +77,9 @@ export interface YouInfo {
   name: string;
   gold: number;
   dex: number[];
-  wallet: string | null;
-  pendingCards: { id: string; name: string }[];
+  /** Golden balls picked up in the last hour (counts toward the hourly limit). */
+  goldThisHour: number;
+  claims: MyClaim[];
 }
 
 export type ThrowKind = 'orb' | 'gold';
@@ -121,10 +116,15 @@ export type ServerMsg =
   | { t: 'catchStart'; spawnId: string; byId: string; at: Vec3 }
   | { t: 'catch'; ok: boolean; spawnId: string; species: number; by: string; byId: string; isNew: boolean }
   | { t: 'card'; card: PublicCard | null }
+  /** Server-simulated card position ~10×/s; `jump` marks a teleport. */
+  | { t: 'cardPos'; id: string; at: number; x: number; y: number; z: number; fleeing: boolean; jump: boolean }
   | { t: 'cardHit'; cardId: string; index: number; odds: number; by: string; byId: string; won: boolean }
   | { t: 'cardCaught'; cardId: string; name: string; by: string; byId: string; secret: string }
+  /** Sent only to the winner. */
+  | { t: 'prizeWon'; claim: MyClaim }
+  | { t: 'banner'; text: string }
   | { t: 'economy'; e: Economy }
-  | { t: 'bag'; gold: number }
+  | { t: 'bag'; gold: number; goldThisHour: number }
   | { t: 'dex'; dex: number[] }
   | { t: 'fx'; kind: ThrowKind; o: Vec3; d: Vec3; by: string }
   | { t: 'toast'; text: string; tone: 'info' | 'gold' | 'pink' | 'warn' }

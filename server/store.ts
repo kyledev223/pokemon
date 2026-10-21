@@ -14,6 +14,7 @@ export interface PlayerRow {
   bonus_granted: number;
   arena_points: number;
   gold_hits: number;
+  banned: number;
   created_at: number;
 }
 
@@ -33,6 +34,9 @@ export function isToken(t: unknown): t is string {
   return typeof t === 'string' && /^[a-f0-9]{32,64}$/.test(t);
 }
 
+/** Too many fresh browser tokens from one network. */
+export class AccountLimitError extends Error {}
+
 export class Store {
   constructor(readonly db: DB) {}
 
@@ -49,6 +53,10 @@ export class Store {
     if (existing) {
       if (name && name !== existing.name) this.db.prepare('UPDATE players SET name = ? WHERE id = ?').run(name, existing.id);
       return this.playerById(existing.id)!;
+    }
+    const recent = this.db.prepare('SELECT COUNT(*) AS n FROM players WHERE ip_hash = ? AND created_at > ?').get(ipHash, Date.now() - 86_400_000) as Row;
+    if ((recent.n as number) >= CONFIG.maxAccountsPerIpDay) {
+      throw new AccountLimitError('Too many new trainers from this network today. Play from the browser you used before.');
     }
     const id = sha256(`player:${token}`).slice(0, 16);
     this.db

@@ -5,7 +5,8 @@ const num = (v: string | undefined, d: number) => (v === undefined || v === '' ?
 
 export const CONFIG = {
   port: num(env.PORT, 8787),
-  adminToken: env.ADMIN_TOKEN || 'dev-admin',
+  /** Admin password (ADMIN_TOKEN is the older name, still accepted). */
+  adminToken: env.ADMIN_PASSWORD || env.ADMIN_TOKEN || 'dev-admin',
   ipSalt: env.IP_SALT || 'dev-salt',
   dbPath: env.DB_PATH || './data/game.db',
   launchedDefault: env.LAUNCHED === 'true',
@@ -16,6 +17,14 @@ export const CONFIG = {
   vaultShare: num(env.VAULT_SHARE, 0.5),
   usdPerGoldenBall: num(env.USD_PER_GOLDEN_BALL, 0.25),
   maxBallsPerDrop: num(env.MAX_BALLS_PER_DROP, 40),
+  /** Fees fill a USDC vault that auto-buys cards into the prize catalog. Off: cards come only from the catalog. */
+  vaultAutoBuy: env.VAULT_AUTO_BUY === 'true',
+
+  // Defaults for the admin-editable prize settings (the admin page overrides these).
+  goldPerHour: num(env.GOLD_PER_HOUR, 20),
+  cardTeleportMinutes: num(env.CARD_TELEPORT_MINUTES, 4),
+  /** New accounts (browser tokens) allowed per IP hash per 24h. */
+  maxAccountsPerIpDay: num(env.MAX_ACCOUNTS_PER_IP_DAY, 5),
 
   chainProvider: (env.CHAIN_PROVIDER || 'mock') as 'mock' | 'solana',
   cluster: env.SOLANA_CLUSTER || 'mainnet-beta',

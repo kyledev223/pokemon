@@ -12,7 +12,8 @@ export interface CardListing {
 }
 
 /**
- * Buys real graded cards (as on-chain tokenized cards) and delivers them to winners.
+ * Buys real graded cards for the prize catalog (only when VAULT_AUTO_BUY is on). Winners claim
+ * them with a claim code like every other catalog card, so there is no automatic delivery.
  * `MockCards` runs offline; `HttpCards` talks to a card marketplace API.
  */
 export interface CardProvider {
@@ -21,6 +22,4 @@ export interface CardProvider {
   findCard(maxUsd: number): Promise<CardListing | null>;
   /** Tell the marketplace we paid; returns the card's on-chain mint. */
   confirmPurchase(listing: CardListing, paymentSig: string): Promise<{ mint: string }>;
-  /** Send the tokenized card to the winner's wallet. Returns the transfer signature. */
-  transferToWinner(mint: string, wallet: string): Promise<string>;
 }

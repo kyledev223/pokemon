@@ -1,0 +1,190 @@
+/* Operator console: dense layout on top of the shared design tokens. */
+
+.admin-main {
+  max-width: 1180px;
+  padding-top: 32px;
+}
+.admin-login {
+  max-width: 420px;
+}
+
+.admin-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.admin-bar .tabs {
+  flex: 1;
+}
+#admin-msg {
+  font-weight: 600;
+}
+#admin-msg.ok {
+  color: #1f9d63;
+}
+
+.admin-panel {
+  display: grid;
+  gap: 16px;
+}
+.admin-card {
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+.admin-card h3 {
+  font-size: 1.1rem;
+}
+.admin-card h4 {
+  font-size: 0.95rem;
+  margin: 6px 0 0;
+}
+.admin-controls {
+  gap: 8px;
+}
+.admin-tile-value {
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+.admin-empty {
+  padding: 10px;
+}
+
+.admin-card-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.admin-kv {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 260px;
+}
+.admin-card-name {
+  font-size: 1.2rem;
+}
+.admin-photo {
+  width: 120px;
+  aspect-ratio: 5 / 7;
+  object-fit: cover;
+  border: var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.admin-thumb {
+  width: 40px;
+  height: 56px;
+  object-fit: cover;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--bg);
+  display: block;
+}
+.admin-code {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.admin-tall {
+  max-height: 70vh;
+}
+.admin-catalog + .admin-catalog {
+  border-top: var(--line);
+}
+.admin-catalog thead tr:first-child th {
+  background: var(--bg);
+}
+.admin-catalog td {
+  white-space: normal;
+  vertical-align: middle;
+}
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-edit-row td {
+  background: #fff8e1;
+}
+.admin-edit label,
+.admin-inline label,
+.admin-filter label,
+.admin-claim-actions label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.admin-edit input,
+.admin-edit select {
+  padding: 0.35em 0.6em;
+}
+.admin-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+.admin-inline > b {
+  align-self: center;
+}
+.admin-inline label {
+  flex: 1;
+  min-width: 140px;
+}
+.admin-filter input {
+  padding: 0.35em 0.6em;
+}
+
+.admin-file {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+.admin-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.admin-danger {
+  background: #ffe0e6;
+}
+
+.admin-settings td {
+  vertical-align: middle;
+}
+.admin-settings input[type='number'] {
+  width: 110px;
+  padding: 0.35em 0.6em;
+}
+.admin-settings input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+}
+
+.admin-alert {
+  background: #ffe0e6;
+}
+.admin-claim-err {
+  font-size: 1.05rem;
+}
+.admin-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+@media (max-width: 700px) {
+  .admin-bar .tabs {
+    flex-basis: 100%;
+  }
+}

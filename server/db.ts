@@ -108,8 +108,101 @@ export function openDb(path: string): DB {
     );
 
     CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+
+    -- Real-card prize catalog: one row per physical card the operator owns.
+    CREATE TABLE IF NOT EXISTS prizes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      set_name TEXT NOT NULL DEFAULT '',
+      grade TEXT NOT NULL DEFAULT '',
+      tier TEXT NOT NULL,              -- S | A | B
+      photo TEXT,                      -- file name in the photos dir, or an https URL
+      status TEXT NOT NULL DEFAULT 'available', -- available | in_play | won | shipped
+      winner_id TEXT,
+      winner_name TEXT,
+      release_id TEXT,
+      winning_idx INTEGER,
+      claim_code TEXT UNIQUE,
+      claim_verified_at INTEGER,
+      tracking TEXT,
+      created_at INTEGER NOT NULL,
+      released_at INTEGER,
+      won_at INTEGER,
+      shipped_at INTEGER
+    );
+
+    -- Every time a prize goes onto the island. The release id is the cardId in the HMAC message.
+    CREATE TABLE IF NOT EXISTS releases (
+      id TEXT PRIMARY KEY,
+      prize_id TEXT NOT NULL REFERENCES prizes(id),
+      tier TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      commitment TEXT NOT NULL,
+      memo_sig TEXT NOT NULL DEFAULT '',
+      odds_base REAL NOT NULL,
+      odds_step REAL NOT NULL,
+      odds_cap REAL NOT NULL,
+      released_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      end_reason TEXT,                 -- caught | recalled
+      throw_count INTEGER NOT NULL DEFAULT 0,
+      winner_id TEXT,
+      winner_name TEXT
+    );
+
+    -- Rolled hits per release (what the verifier replays).
+    CREATE TABLE IF NOT EXISTS release_throws (
+      release_id TEXT NOT NULL REFERENCES releases(id),
+      idx INTEGER NOT NULL,
+      player_id TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      odds REAL NOT NULL,
+      won INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (release_id, idx)
+    );
+
+    -- Server log of every golden throw and every rejected throw.
+    CREATE TABLE IF NOT EXISTS throw_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      player_id TEXT NOT NULL,
+      ip_hash TEXT,
+      kind TEXT NOT NULL,
+      release_id TEXT,
+      origin TEXT NOT NULL,
+      dir TEXT NOT NULL,
+      client_at INTEGER,
+      result TEXT NOT NULL,            -- pending | hit | miss | rejected:<reason>
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS throw_log_player ON throw_log(player_id, created_at);
+    CREATE INDEX IF NOT EXISTS throw_log_release ON throw_log(release_id);
+
+    CREATE TABLE IF NOT EXISTS pickups (
+      player_id TEXT NOT NULL,
+      ip_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pickups_player ON pickups(player_id, created_at);
+    CREATE INDEX IF NOT EXISTS pickups_ip ON pickups(ip_hash, created_at);
+
+    CREATE TABLE IF NOT EXISTS flags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      player_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS flags_player ON flags(player_id);
   `);
+  addColumn(db, 'players', 'banned', 'INTEGER NOT NULL DEFAULT 0');
   return db;
+}
+
+/** Tiny forward-only migration for columns added after a DB was created. */
+function addColumn(db: DB, table: string, column: string, def: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
 }
 
 export function kvGet(db: DB, k: string): string | null {

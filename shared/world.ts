@@ -22,8 +22,11 @@ export const THROW_SPEED = 26;
 export const BALL_GRAVITY = -14;
 export const THROW_MAX_T = 3;
 export const PICKUP_RADIUS = 2.2;
-export const CARD_SCALE = 2.2;
-export const CARD_HIT_RADIUS = 2.4;
+/** The roaming card slab floats this high above the ground (its centre). */
+export const CARD_HOVER = 1.8;
+export const CARD_HIT_RADIUS = 1.8;
+/** Clients draw the server-simulated card this far in the past; hit checks use the same delay. */
+export const INTERP_DELAY_MS = 150;
 
 export const LOBBY = { x: 0, y: 58, z: 0, r: 11 };
 export const PLAZA = { x: 0, z: 0, r: 8 };
@@ -316,35 +319,6 @@ export function critterCenter(p: Pose, size: number): Vec3 {
   return { x: p.x, y: p.y + 0.55 * size, z: p.z };
 }
 export const critterHitRadius = (size: number) => 0.6 * size + 0.5;
-
-export function cardPose(seed: number, releasedAt: number, nowMs: number): Pose {
-  const t = (nowMs - releasedAt) / 1000;
-  const w = wander(seed, t, 52, 0.035);
-  let x = w.x;
-  let z = w.z;
-  const pushOut = () => {
-    const dx = x - CAVE.x;
-    const dz = z - CAVE.z;
-    const d = Math.hypot(dx, dz);
-    const min = CAVE.outer + 3;
-    if (d < min) {
-      const k = min / Math.max(d, 0.01);
-      x = CAVE.x + dx * k;
-      z = CAVE.z + dz * k;
-    }
-  };
-  pushOut();
-  for (let i = 0; i < 12 && terrainHeight(x, z) < 0.8; i++) {
-    x *= 0.9;
-    z *= 0.9;
-  }
-  pushOut();
-  return { x, y: terrainHeight(x, z), z, heading: w.heading, airborne: false };
-}
-
-export function cardCenter(p: Pose): Vec3 {
-  return { x: p.x, y: p.y + 0.55 * CARD_SCALE, z: p.z };
-}
 
 // ── Spawn placement (server side, but kept here next to the terrain rules) ──
 

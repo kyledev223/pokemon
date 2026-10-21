@@ -5,8 +5,8 @@ import { api, saveName, savedName, prefGet, prefSet } from './api';
 import { Game, type Spot } from './game/game';
 import { Minimap } from './game/minimap';
 import { Chat } from './chat';
-import { applyBrand, applyEconomy, loadMySpot, money, refreshStatus, renderCards, setMySpot, tickCountdown } from './landing';
-import { openArena, openClaim, openDex, openMarket, openRanks, openWaitlistJoined } from './panels';
+import { TIER_TAG, applyBrand, applyEconomy, loadMySpot, nextReleaseText, refreshStatus, renderCards, setCard, setMySpot, tickCountdown } from './landing';
+import { openArena, openDex, openMarket, openMyClaims, openPrizeWon, openRanks, openWaitlistJoined } from './panels';
 import { initVerifier } from './verify';
 import { $, $$, esc, initModal, mmss, modalOpen, pct, toast, usd } from './ui';
 
@@ -21,6 +21,9 @@ nameInput.value = savedName();
 
 let card: PublicCard | null = null;
 let eventInfo: { species: number; endsAt: number } | null = null;
+let gold = 0;
+let goldThisHour = 0;
+let bannerTimer = 0;
 
 const chat = new Chat((text) => game.sendChat(text));
 const minimap = new Minimap($<HTMLCanvasElement>('#minimap'));
@@ -35,23 +38,39 @@ const game = new Game(shell, $<HTMLCanvasElement>('#game-canvas'), {
   onEconomy(e) {
     applyEconomy(e);
     $('#hud-online').textContent = String(e.online);
-    $('#hud-vault').textContent = usd(e.vaultUsd);
-    $('#hud-vault-bar').style.width = `${Math.min(100, (e.vaultUsd / e.threshold) * 100)}%`;
-    $('#hud-econ-note').textContent = `next card at ${money(e.threshold)} · ${e.balls} golden ball${e.balls === 1 ? '' : 's'} on the island`;
+    renderEcon();
     renderMasters(e.dexMasters);
     renderHudCard();
     syncStartCopy();
   },
   onCard(c) {
+    // The collection grid shows which card is loose, so refresh it when the card changes.
+    if (c?.id !== card?.id) void renderCards();
     card = c;
+    setCard(c);
     renderHudCard();
   },
   onYou(you) {
     chat.myName = you.name;
+    $('#hud-claims').hidden = !you.claims.length;
   },
-  onGold(n) {
+  onGold(n, thisHour) {
+    gold = n;
+    if (thisHour >= 0) goldThisHour = thisHour;
     $('#hud-gold').textContent = String(n);
     $('#t-gold-count').textContent = String(n);
+    renderEcon();
+  },
+  onBanner(text) {
+    const el = $('#hud-banner');
+    el.textContent = `🃏 ${text}`;
+    el.hidden = false;
+    clearTimeout(bannerTimer);
+    bannerTimer = window.setTimeout(() => (el.hidden = true), 9000);
+  },
+  onPrizeWon(claim) {
+    $('#hud-claims').hidden = false;
+    openPrizeWon(claim, resumeIfPlaying);
   },
   onDex(dex) {
     $('#hud-dex').textContent = `${dex.filter((id) => speciesById(id).region === 'base').length}/${BASE_DEX_SIZE}`;
@@ -65,8 +84,7 @@ const game = new Game(shell, $<HTMLCanvasElement>('#game-canvas'), {
   onChatReset: (lines) => chat.reset(lines),
   onCardCaught(m, mine) {
     toast(mine ? `🎉 YOU caught the real ${m.name}!` : `🎉 ${m.by} caught the real ${m.name}!`, 'gold', 6000);
-    setTimeout(() => void renderCards(), 2500);
-    if (mine) openClaim(m.name, game.you, undefined, resumeIfPlaying);
+    setTimeout(() => void renderCards(), 1500);
   },
   onPause(paused) {
     if (modalOpen() || !game.playing) return;
@@ -121,21 +139,37 @@ function syncStartCopy(): void {
 function renderHudCard(): void {
   const e = game.economy;
   const thumb = $('#hud-card-thumb');
-  const threshold = e ? money(e.threshold) : '$10';
-  const vault = e ? usd(e.vaultUsd) : '$0.00';
   if (!card) {
     thumb.innerHTML = '<span>?</span>';
     $('#hud-card-title').textContent = 'NO CARD IN PLAY';
-    $('#hud-card-line1').textContent = `Next card at ${threshold}`;
-    $('#hud-card-line2').textContent = `Vault ${vault}`;
-    $('#hud-note').textContent = e?.launched ? 'Next card spawns when the vault fills.' : 'Golden drops start at launch.';
+    $('#hud-card-line1').textContent = nextReleaseText(e).replace(/^./, (c) => c.toUpperCase());
+    $('#hud-card-line2').textContent = e ? `${e.prizesLeft} real cards left in the collection` : 'Real cards from our collection';
+    $('#hud-note').textContent = e?.launched ? 'Stock up on golden balls before it drops.' : 'Golden drops start at launch.';
     return;
   }
   thumb.innerHTML = `<img src="${esc(card.image)}" alt="" />`;
-  $('#hud-card-title').textContent = card.name;
-  $('#hud-card-line1').textContent = `${card.grade} · ${usd(card.valueUsd)}`;
+  $('#hud-card-title').innerHTML = `${esc(card.name)} <span class="tag ${TIER_TAG[card.tier]}">Tier ${card.tier}</span>`;
+  $('#hud-card-line1').textContent = [card.set, card.grade].filter(Boolean).join(' · ') || 'Real card from our collection';
   $('#hud-card-line2').textContent = `${card.throws} hits · next ${pct(card.nextOdds)}`;
-  $('#hud-note').textContent = '🎯 Hit the golden card creature. Every hit is a roll.';
+  $('#hud-note').textContent = '🎯 Only golden balls catch it. It runs when you get close.';
+}
+
+/** Second economy row: the hourly golden-ball allowance (or the fee vault when VAULT_AUTO_BUY is on). */
+function renderEcon(): void {
+  const e = game.economy;
+  if (!e) return;
+  const bar = $('#hud-econ2-bar');
+  if (e.vault) {
+    $('#hud-econ2-label').textContent = '🃏 Card vault';
+    $('#hud-econ2').textContent = usd(e.vault.usd);
+    bar.style.width = `${Math.min(100, (e.vault.usd / e.vault.threshold) * 100)}%`;
+  } else {
+    $('#hud-econ2-label').textContent = '🟡 Golden balls this hour';
+    $('#hud-econ2').textContent = `${goldThisHour}/${e.goldPerHour}`;
+    bar.style.width = `${Math.min(100, (goldThisHour / e.goldPerHour) * 100)}%`;
+  }
+  const cardLine = card ? `real ${card.name} loose now` : nextReleaseText(e);
+  $('#hud-econ-note').textContent = `${cardLine} · ${e.balls} golden ball${e.balls === 1 ? '' : 's'} on the island · ${gold} in your bag`;
 }
 
 let mastersKey = '';
@@ -226,6 +260,7 @@ $$('[data-open]').forEach((b) =>
     if (which === 'ranks') void openRanks(resumeIfPlaying);
     if (which === 'arena') void openArena(resumeIfPlaying);
     if (which === 'market') void openMarket(resumeIfPlaying);
+    if (which === 'claims') void openMyClaims(resumeIfPlaying);
   }),
 );
 $('#hud-prompt').addEventListener('click', (e) => {
@@ -247,6 +282,12 @@ setInterval(() => {
   tickCountdown();
 }, 250);
 
+// Countdown text in the HUD ("next card in 4h 12m") only needs a slow refresh.
+setInterval(() => {
+  renderEcon();
+  if (!card) renderHudCard();
+}, 1000);
+
 setInterval(() => {
   if (game.playing) minimap.draw(game.mapMe(), game.mapBalls(), game.mapOthers(), game.mapCard());
 }, 100);
@@ -267,6 +308,13 @@ void refreshStatus().then((s) => {
     renderHudCard();
   }
 });
+// Winners who reload can still reach their claim codes (only browsers that have played before).
+if (savedName()) {
+  void api
+    .me()
+    .then((me) => ($('#hud-claims').hidden = !me.you.claims.length))
+    .catch(() => {});
+}
 setInterval(() => void refreshStatus(), 30_000);
 void refreshLeaderboard();
 setInterval(() => void refreshLeaderboard(), 60_000);

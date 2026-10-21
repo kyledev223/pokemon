@@ -1,6 +1,6 @@
 import { oddsForThrow, rollFromHex, rollMessage } from '../shared/fair';
 import { api, type FairCard, type FairDetail } from './api';
-import { $, esc, pct, txLink } from './ui';
+import { $, esc, pct, pts, txLink } from './ui';
 
 // Client-side provably-fair verifier. Everything is recomputed with WebCrypto in the
 // visitor's browser; the server's claimed results are only compared, never trusted.
@@ -34,7 +34,14 @@ export async function initVerifier(): Promise<void> {
       cards = [];
     }
     select.innerHTML = cards.length
-      ? cards.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} · ${c.revealed ? `${c.throws} throws · revealed` : 'in play (secret hidden)'}</option>`).join('')
+      ? cards
+          .map(
+            (c) =>
+              `<option value="${esc(c.id)}">${esc(c.name)} (Tier ${c.tier}) · ${new Date(c.releasedAt).toLocaleDateString()} · ${
+                c.status === 'in_play' ? 'in play, secret hidden' : `${c.throws} hits · ${c.status}`
+              }</option>`,
+          )
+          .join('')
       : '<option value="">No cards released yet</option>';
   };
   await load();
@@ -60,9 +67,11 @@ export async function initVerifier(): Promise<void> {
 }
 
 async function report(d: FairDetail, secret: string | null, commitment: string): Promise<string> {
-  const head = `<p><b>${esc(d.name)}</b> · <code>${esc(d.id)}</code><br/>Commitment <code>${esc(commitment)}</code> ${d.memoSig ? `· memo ${txLink(d.memoSig)}` : ''}</p>`;
+  const o = d.odds;
+  const head = `<p><b>${esc(d.name)}</b> <span class="tag">Tier ${d.tier}</span> · card id <code>${esc(d.id)}</code><br/>
+    Odds ${pct(o.base)} + ${pts(o.step)} pts per miss, cap ${pct(o.cap)} · commitment <code>${esc(commitment)}</code> ${d.memoSig ? `· memo ${txLink(d.memoSig)}` : ''}</p>`;
   if (!secret) {
-    return `${head}<p>This card is still in play, so its secret stays hidden until someone catches it. <b>${d.throws.length}</b> throws logged so far. Come back after the catch and every roll will be checkable.</p>`;
+    return `${head}<p>This card is still on the island, so its secret stays hidden until someone catches it. <b>${d.throws.length}</b> throws logged so far. Come back after the catch and every roll will be checkable.</p>`;
   }
   if (!/^[0-9a-f]{64}$/.test(secret)) return `${head}<p class="bad">Secret must be 64 hex characters.</p>`;
 
@@ -71,22 +80,32 @@ async function report(d: FairDetail, secret: string | null, commitment: string):
   let mismatches = 0;
   let firstWin = -1;
   const rows = d.throws.map((t, i) => {
-    const odds = oddsForThrow(i);
+    const odds = oddsForThrow(i, o);
     const won = rolls[i] < odds;
     if (won && firstWin < 0) firstWin = i;
     const ok = t.index === i && Math.abs(t.odds - odds) < 1e-12 && t.won === won;
     if (!ok) mismatches++;
     return `<tr class="${won ? 'win' : ''}"><td>#${i + 1}</td><td>${esc(t.player)}</td><td>${pct(odds)}</td><td>${rolls[i].toFixed(8)}</td><td>${won ? '🎉 win' : 'miss'}</td><td>${ok ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'}</td></tr>`;
   });
+  // A caught card must end on its first winning roll; a recalled one must have no winning roll at all.
   const lastIsWin = firstWin === d.throws.length - 1;
-  const allOk = commitOk && mismatches === 0 && (d.status === 'in_play' || lastIsWin);
+  const endOk = d.status === 'recalled' ? firstWin === -1 : lastIsWin;
+  const allOk = commitOk && mismatches === 0 && endOk;
   return `${head}
     <div class="verify-summary">
       <span class="tag ${commitOk ? 'gold' : 'pink'}">${commitOk ? '✓' : '✗'} sha256(secret) matches commitment</span>
       <span class="tag ${mismatches ? 'pink' : 'gold'}">${mismatches ? `✗ ${mismatches} rolls differ` : `✓ all ${d.throws.length} rolls recomputed`}</span>
-      <span class="tag ${lastIsWin ? 'gold' : 'pink'}">${lastIsWin ? `✓ first winning roll is throw #${firstWin + 1} (${esc(d.winnerName ?? '')})` : '✗ winner does not match first winning roll'}</span>
+      <span class="tag ${endOk ? 'gold' : 'pink'}">${
+        d.status === 'recalled'
+          ? endOk
+            ? '✓ recalled with no winning roll'
+            : `✗ roll #${firstWin + 1} should have won`
+          : endOk
+            ? `✓ first winning roll is throw #${firstWin + 1} (${esc(d.winnerName ?? '')})`
+            : '✗ winner does not match first winning roll'
+      }</span>
     </div>
-    <p class="${allOk ? 'ok' : 'bad'}"><b>${allOk ? 'Verified. This catch was fair.' : 'Verification failed. Please report this.'}</b></p>
+    <p class="${allOk ? 'ok' : 'bad'}"><b>${allOk ? (d.status === 'recalled' ? 'Verified. No roll was skipped.' : 'Verified. This catch was fair.') : 'Verification failed. Please report this.'}</b></p>
     <div class="table-wrap"><table><thead><tr><th>Throw</th><th>Trainer</th><th>Odds</th><th>Roll</th><th>Result</th><th>Match</th></tr></thead>
     <tbody>${rows.join('')}</tbody></table></div>`;
 }

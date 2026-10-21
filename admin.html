@@ -10,32 +10,102 @@
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body class="admin">
-    <main class="section">
+    <main class="section admin-main">
       <div class="section-head">
-        <span class="section-icon">🛠️</span>
+        <span class="ico yellow">🛠️</span>
         <h2>Island admin</h2>
-        <p>Operator controls. Every action is server-side and requires the admin token.</p>
+        <p>Operator console: prizes, releases, claims and abuse. Every action runs server-side and needs the admin password.</p>
       </div>
-      <form class="form-grid" id="login">
-        <label>Admin token <input id="admin-token" type="password" autocomplete="current-password" /></label>
+
+      <form class="form-grid admin-login" id="login">
+        <label>Admin password <input id="admin-token" type="password" autocomplete="current-password" required /></label>
         <div class="row"><button class="btn btn-primary" type="submit">Connect</button><span class="err" id="admin-err"></span></div>
       </form>
+
       <div id="admin-ui" hidden>
-        <div class="row" style="margin: 16px 0">
-          <button class="btn btn-primary" data-act="launch">🚀 Launch</button>
-          <button class="btn btn-ghost" data-act="unlaunch">⏪ Back to pre-launch</button>
-          <button class="btn btn-gold" data-act="claim">⚡ Claim fees now</button>
-          <button class="btn btn-ghost" data-act="vault">💰 Add $10 to vault</button>
-          <button class="btn btn-ghost" data-act="balls">🟡 Drop 20 balls</button>
-          <button class="btn btn-ghost" data-act="event">🌟 Legendary event</button>
+        <div class="admin-bar">
+          <nav class="tabs" id="admin-tabs">
+            <button type="button" data-tab="overview" class="active">📊 Overview</button>
+            <button type="button" data-tab="catalog">🃏 Catalog</button>
+            <button type="button" data-tab="schedule">⏱️ Schedule &amp; odds</button>
+            <button type="button" data-tab="claims">🎁 Claims</button>
+            <button type="button" data-tab="abuse">🚩 Anti-abuse</button>
+          </nav>
+          <span class="err" id="admin-msg" role="status"></span>
+          <button class="btn btn-sm" type="button" id="logout">Log out</button>
         </div>
-        <div class="stat-tiles" id="admin-tiles"></div>
-        <div class="ranks-grid" style="margin-top: 16px">
-          <div class="rank-box"><h3>Card in play / queue</h3><div id="admin-cards"></div></div>
-          <div class="rank-box"><h3>Pending deliveries</h3><div id="admin-pending"></div></div>
-          <div class="rank-box"><h3>Recent fee claims</h3><div class="table-wrap" id="admin-claims"></div></div>
-          <div class="rank-box"><h3>Recent golden hits</h3><div class="table-wrap" id="admin-throws"></div></div>
-        </div>
+
+        <!-- Overview: status, island controls, card in play, fee claims -->
+        <section data-panel="overview" class="admin-panel">
+          <div class="stat-tiles" id="admin-tiles"></div>
+          <div class="row admin-controls">
+            <button class="btn btn-primary btn-sm" data-act="launch">🚀 Launch</button>
+            <button class="btn btn-sm" data-act="unlaunch">⏪ Back to pre-launch</button>
+            <button class="btn btn-gold btn-sm" data-act="claim">⚡ Claim fees now</button>
+            <button class="btn btn-sm" data-act="balls">🟡 Drop 20 balls</button>
+            <button class="btn btn-sm" data-act="event">🌟 Legendary event</button>
+            <button class="btn btn-sm" data-act="vault" id="vault-btn" hidden>💰 Add $10 to vault</button>
+          </div>
+          <div class="card admin-card">
+            <h3>Card in play</h3>
+            <div id="admin-card"></div>
+          </div>
+          <div class="card admin-card">
+            <h3>Recent fee claims</h3>
+            <div class="table-wrap" id="admin-fees"></div>
+          </div>
+        </section>
+
+        <!-- Prize catalog -->
+        <section data-panel="catalog" class="admin-panel" hidden>
+          <form class="form-grid admin-inline" id="add-prize">
+            <b>Add card</b>
+            <label>Name <input name="name" required maxlength="60" placeholder="Card name" /></label>
+            <label>Set <input name="set" maxlength="60" placeholder="Set" /></label>
+            <label>Grade <input name="grade" maxlength="40" placeholder="Condition / grade" /></label>
+            <label>Tier
+              <select name="tier"><option>S</option><option>A</option><option selected>B</option></select>
+            </label>
+            <button class="btn btn-primary btn-sm" type="submit">Add</button>
+          </form>
+          <div class="table-wrap admin-tall" id="admin-catalog"></div>
+        </section>
+
+        <!-- Settings -->
+        <section data-panel="schedule" class="admin-panel" hidden>
+          <form class="form-grid" id="settings-form"></form>
+        </section>
+
+        <!-- Claims -->
+        <section data-panel="claims" class="admin-panel" hidden>
+          <form class="form-grid admin-inline" id="claim-lookup">
+            <label>Claim code <input name="code" required placeholder="CLAIM-XXXX-XXXX" autocomplete="off" spellcheck="false" /></label>
+            <button class="btn btn-primary btn-sm" type="submit">Look up</button>
+          </form>
+          <div id="claim-detail"></div>
+          <div class="card admin-card">
+            <h3>All claims</h3>
+            <div class="table-wrap" id="claims-list"></div>
+          </div>
+        </section>
+
+        <!-- Anti-abuse -->
+        <section data-panel="abuse" class="admin-panel" hidden>
+          <div class="card admin-card">
+            <h3>Flags</h3>
+            <div class="table-wrap" id="flags-list"></div>
+          </div>
+          <div class="card admin-card">
+            <h3>Throw log</h3>
+            <form class="row admin-filter" id="throw-filter">
+              <label>Player id <input name="player" autocomplete="off" /></label>
+              <label>Release id <input name="release" autocomplete="off" /></label>
+              <button class="btn btn-sm" type="submit">Filter</button>
+              <button class="btn btn-sm" type="button" id="throw-clear">Recent</button>
+            </form>
+            <div class="table-wrap admin-tall" id="throws-list"></div>
+          </div>
+        </section>
       </div>
     </main>
     <script type="module" src="/src/admin.ts"></script>

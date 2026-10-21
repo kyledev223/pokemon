@@ -46,15 +46,15 @@
                 <div class="slab-thumb" id="hud-card-thumb"><span>?</span></div>
                 <div class="hud-card-text">
                   <b id="hud-card-title">NO CARD IN PLAY</b>
-                  <small id="hud-card-line1">Next card at $10</small>
-                  <small id="hud-card-line2">Vault $0.00</small>
+                  <small id="hud-card-line1">Next card soon</small>
+                  <small id="hud-card-line2">Real cards from our collection</small>
                 </div>
               </div>
               <div class="panel hud-econ">
                 <div class="econ-row"><span>⚡ Next golden drop</span><b class="num" id="hud-drop">--:--</b></div>
-                <div class="econ-row"><span>🃏 Card vault</span><b class="num" id="hud-vault">$0.00</b></div>
-                <div class="bar"><i id="hud-vault-bar"></i></div>
-                <small class="econ-note" id="hud-econ-note">next card at $10 · 0 golden balls on the island</small>
+                <div class="econ-row"><span id="hud-econ2-label">🟡 Golden balls this hour</span><b class="num" id="hud-econ2">0/20</b></div>
+                <div class="bar"><i id="hud-econ2-bar"></i></div>
+                <small class="econ-note" id="hud-econ-note">0 golden balls on the island</small>
                 <div class="econ-row master-row"><span>💎 Master card</span><span class="tag dark">🔒 Secret</span></div>
                 <small class="gold-note" id="hud-note">Complete every dex page first to win it.</small>
               </div>
@@ -62,6 +62,7 @@
 
             <div class="hud-tc">
               <div class="ticker" id="hud-ticker"><span class="ticker-label">🏅 Dex masters</span><span class="ticker-track"><span id="hud-masters">Be the first to complete the dex</span></span></div>
+              <div class="card-banner" id="hud-banner" hidden></div>
               <div class="event-banner" id="hud-event" hidden></div>
               <div class="toasts" id="toasts" aria-live="polite"></div>
             </div>
@@ -74,6 +75,7 @@
                 <button class="hud-pill pink" type="button" data-open="arena">⚔️ Arena</button>
                 <button class="hud-pill gold" type="button" data-open="ranks">🏆 Ranks</button>
                 <button class="hud-pill" type="button" data-open="market">🏪 Market</button>
+                <button class="hud-pill gold" type="button" data-open="claims" id="hud-claims" hidden>🎁 My cards</button>
                 <button class="hud-pill" type="button" id="hud-sound" aria-label="Toggle sound">🔊 Sound</button>
               </div>
             </div>
@@ -116,7 +118,7 @@
                 <h1 data-brand>Candy Cove</h1>
               </div>
               <p class="start-tagline" data-tagline>A shared island where creator fees rain golden balls and real graded cards roam free.</p>
-              <p class="status-pill"><i class="live-dot"></i><span id="hero-status">0 golden balls on the island · vault $0.00 / next card at $10</span></p>
+              <p class="status-pill"><i class="live-dot"></i><span id="hero-status">0 golden balls on the island · next real card soon</span></p>
               <div class="start-row">
                 <label class="sr-only" for="name-input">Your name</label>
                 <input id="name-input" name="name" maxlength="16" minlength="2" autocomplete="nickname" placeholder="Your name" required />
@@ -127,8 +129,8 @@
                 <span class="kbd">F</span> golden <span class="kbd">C</span> dex <span class="kbd">Enter</span> chat
               </p>
               <p class="start-note" id="start-note">
-                Pink orbs are free and unlimited: use them to catch critters for your dex. Golden balls are limited: they drop on the island
-                with creator fees, and every one that hits the real card is a roll to win it.
+                Pink orbs are free and unlimited: use them to catch critters for your dex. Golden balls are scarce: they drop with creator fees,
+                you can pick up a limited number per hour, and every one that hits the real card is a roll to win it.
               </p>
             </form>
           </div>
@@ -157,7 +159,7 @@
         <div class="section-head">
           <span class="ico yellow">⚡</span>
           <h2>How it works</h2>
-          <p>Every trade of <span data-ticker>$COVE</span> pays creator fees. Every minute we claim them and pour them into the island.</p>
+          <p>Every trade of <span data-ticker>$COVE</span> pays creator fees that rain golden balls on the island. Real cards from our own collection roam it on a schedule.</p>
         </div>
         <div class="grid-4">
           <article class="card feature">
@@ -168,28 +170,28 @@
           <article class="card feature">
             <span class="ico pink">🃏</span>
             <h3>A real card roams</h3>
-            <p>The rest fills a public vault. At <b class="js-threshold">$10</b> we buy a real graded card and release it as a creature.</p>
+            <p>On a schedule we release one card from our collection as a glowing slab. It wanders, runs from you, and jumps around the island.</p>
           </article>
           <article class="card feature">
             <span class="ico blue">🎯</span>
             <h3>Every hit is a roll</h3>
-            <p>Odds start at <b>0.4%</b> and climb <b>+0.012 pts</b> with every miss, up to 25%. Anyone's hit can be the one.</p>
+            <p>Each golden-ball hit is a provably fair roll. Odds start tiny and climb with every miss, so anyone's hit can be the one.</p>
           </article>
           <article class="card feature">
             <span class="ico green">🎁</span>
             <h3>Catch it, claim it</h3>
-            <p>Land the winning hit and paste any Solana wallet. No signing, no connecting. The card is sent to you.</p>
+            <p>The winning hit gets a one-time claim code. DM it to us on X with your address and we mail you the physical card.</p>
           </article>
         </div>
 
         <div class="grid-4 callouts">
-          <div class="callout"><b id="how-hits">~88</b><span>average hits to catch a card</span></div>
-          <div class="callout"><b>0.4→25%</b><span>odds per hit, <em>+0.012 pts</em> per miss</span></div>
-          <div class="callout"><b id="how-caught">0</b><span>real cards caught so far</span></div>
-          <div class="callout"><b id="how-waitlist">0</b><span>trainers on the <em>pre-launch</em> list</span></div>
+          <div class="callout"><b id="how-hits">~144</b><span>average hits to catch a <em>Tier B</em> card</span></div>
+          <div class="callout"><b id="how-left">17</b><span>real cards still in the <em>collection</em></span></div>
+          <div class="callout"><b id="how-caught">0</b><span>real cards won so far</span></div>
+          <div class="callout"><b id="how-cap">20</b><span>golden balls per trainer <em>per hour</em> max</span></div>
         </div>
 
-        <div class="card vault-card">
+        <div class="card vault-card" id="vault-card" hidden>
           <span class="ico purple">💎</span>
           <div class="vault-text">
             <h3>Public vault wallet</h3>
@@ -221,14 +223,20 @@
       <!-- ── Real cards won ───────────────────────────────────────────── -->
       <section id="cards" class="section">
         <div class="section-head">
-          <span class="ico pink">🏆</span>
-          <h2>Real cards won</h2>
-          <p>Every card caught on the island, who caught it and the on-chain receipts.</p>
+          <span class="ico pink">🃏</span>
+          <h2>Real cards</h2>
+          <p>Physical cards from our own collection. Each one is a single item: once it's won, it's gone for good.</p>
         </div>
+        <div class="tier-strip" id="tier-strip"></div>
+        <div class="slab-grid" id="catalog-grid">
+          <div class="card empty"><span class="ico yellow">🃏</span><p>Loading the collection…</p></div>
+        </div>
+
+        <h3 class="sub-head">🏆 Real cards won</h3>
         <div class="slab-grid" id="cards-grid">
           <div class="card empty">
-            <span class="ico yellow">🃏</span>
-            <p>No cards caught yet. The first one could be yours.</p>
+            <span class="ico yellow">🏆</span>
+            <p>No cards won yet. The first one could be yours.</p>
           </div>
         </div>
       </section>
@@ -257,11 +265,12 @@
           <p>We can't pick the winner, and you can check that yourself.</p>
         </div>
         <ol class="steps">
-          <li class="card"><b>Commit</b><span>When a card spawns, the server draws a random 32-byte <code>secret</code> and publishes <code>sha256(secret)</code>, also in an on-chain memo.</span></li>
+          <li class="card"><b>Commit</b><span>When a card is released, the server draws a random 32-byte <code>secret</code> and publishes <code>sha256(secret)</code>, also in an on-chain memo.</span></li>
           <li class="card"><b>Roll</b><span>Hit #n (index <code>i = n − 1</code>) wins if <code>HMAC-SHA256(secret, "cardId:i") / 2²⁵⁶</code> is below that hit's odds.</span></li>
-          <li class="card"><b>Reveal</b><span>After the catch the secret is published. Your browser recomputes every roll; nothing is trusted.</span></li>
+          <li class="card"><b>Reveal</b><span>When the card is caught (or recalled), the secret is published. Your browser recomputes every roll in the full throw log.</span></li>
         </ol>
-        <p class="note">The HMAC key is the raw secret bytes; the full 256-bit digest is read as an integer and divided by 2²⁵⁶.</p>
+        <p class="note">The HMAC key is the raw secret bytes; the full 256-bit digest is read as an integer and divided by 2²⁵⁶. Each release's
+          odds are fixed when it goes out and shown with its throw log.</p>
 
         <div class="card verifier">
           <div class="verifier-controls">
@@ -288,7 +297,8 @@
         <a class="logo-pill" href="#play"><img src="/favicon.svg" alt="" width="26" height="26" /><span data-brand>Candy Cove</span></a>
         <p>
           <span data-brand>Candy Cove</span> is a memecoin game. All creatures, names and art are original. Not affiliated with, endorsed by or
-          sponsored by any trading card company. Card prizes are third-party graded collectibles. Nothing here is financial advice.
+          sponsored by any trading card company. Real card prizes are physical cards from our own collection; card names describe those items and belong to
+          their trademark owners. Nothing here is financial advice.
         </p>
       </div>
     </footer>

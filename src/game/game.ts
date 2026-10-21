@@ -7,9 +7,9 @@ import {
   BAZAAR,
   CAVE,
   CARD_HIT_RADIUS,
-  CARD_SCALE,
   DEX_MASTER,
   EYE_HEIGHT,
+  INTERP_DELAY_MS,
   JUMP_SPEED,
   LOBBY,
   PICKUP_RADIUS,
@@ -18,8 +18,6 @@ import {
   THROW_SPEED,
   WALK_SPEED,
   WATER_Y,
-  cardCenter,
-  cardPose,
   critterCenter,
   critterHitRadius,
   critterPose,
@@ -32,9 +30,12 @@ import {
   type Vec3,
 } from '../../shared/world';
 import type { Ball, ChatLine, Economy, EventInfo, PublicCard, ServerMsg, ThrowKind, YouInfo } from '../../shared/protocol';
+import type { MyClaim } from '../../shared/prizes';
 import { buildIsland, makeNameTag, type Island } from './world3d';
 import { animateCritter, buildCritter, type CritterRig } from './critterMesh';
 import { BEAM_GEO, BEAM_MAT, GOLD_MAT, makeGoldBall, makePinkOrb, sparkleTexture } from './orbs';
+import { CardSlab } from './cardSlab';
+import { pct } from '../ui';
 import { Hand } from './hand';
 import { Input } from './input';
 import { Net } from './net';
@@ -47,11 +48,13 @@ export interface GameHooks {
   onEconomy(e: Economy): void;
   onCard(card: PublicCard | null): void;
   onYou(you: YouInfo): void;
-  onGold(n: number): void;
+  onGold(n: number, thisHour: number): void;
   onDex(dex: number[]): void;
   onEvent(e: EventInfo | null): void;
   onToast(text: string, tone: 'info' | 'gold' | 'pink' | 'warn'): void;
   onCardCaught(m: Extract<ServerMsg, { t: 'cardCaught' }>, mine: boolean): void;
+  onPrizeWon(claim: MyClaim): void;
+  onBanner(text: string): void;
   onChat(line: ChatLine): void;
   onChatReset(lines: ChatLine[]): void;
   onPause(paused: boolean): void;
@@ -144,7 +147,7 @@ export class Game {
   private beamMesh: THREE.InstancedMesh;
   private critters = new Map<string, CritterView>();
   private captures = new Map<string, Capture>();
-  private card: { info: PublicCard; rig: CritterRig; holder: THREE.Group; plane: THREE.Mesh; light: THREE.PointLight } | null = null;
+  private card: CardSlab | null = null;
   private projectiles: Projectile[] = [];
   private bursts: Burst[] = [];
   private lastPosSent = 0;
@@ -256,7 +259,7 @@ export class Game {
     return [...this.remotes.values()].map((r) => ({ x: r.target.x, z: r.target.z }));
   }
   mapCard(): { x: number; z: number } | null {
-    return this.card ? { x: this.card.holder.position.x, z: this.card.holder.position.z } : null;
+    return this.card?.group.visible ? { x: this.card.center.x, z: this.card.center.z } : null;
   }
 
   // ── Network ─────────────────────────────────────────────────────────
@@ -288,7 +291,7 @@ export class Game {
         }
         this.syncLobby();
         this.hooks.onYou(m.you);
-        this.hooks.onGold(this.gold);
+        this.hooks.onGold(this.gold, m.you.goldThisHour);
         this.hooks.onDex(m.you.dex);
         break;
       }
@@ -347,21 +350,28 @@ export class Game {
       case 'card':
         this.setCard(m.card);
         break;
+      case 'cardPos':
+        if (this.card?.info.id === m.id) {
+          this.card.push({ at: m.at, x: m.x, y: m.y, z: m.z, jump: m.jump });
+          this.card.fleeing = m.fleeing;
+        }
+        break;
       case 'cardHit':
         if (this.card && this.card.info.id === m.cardId) {
-          this.card.info.throws = m.index + 1;
-          this.card.info.nextOdds = Math.min(0.25, m.odds + 0.00012);
-          this.hooks.onCard(this.card.info);
-          this.burst(this.card.holder.position.clone().setY(this.card.holder.position.y + 1.5), '#ffd23f');
+          const info = this.card.info;
+          info.throws = m.index + 1;
+          info.nextOdds = Math.min(info.odds.cap, m.odds + info.odds.step);
+          this.hooks.onCard(info);
+          this.burst(this.card.center, '#ffd23f');
         }
         if (m.byId === this.you?.id && !m.won) {
           this.sfx.cardHit();
-          this.hooks.onToast(`🎯 Hit #${m.index + 1} at ${(m.odds * 100).toFixed(3)}%. Not this time, odds go up!`, 'gold');
+          this.hooks.onToast(`🎯 Hit #${m.index + 1} at ${pct(m.odds)}. Not this time, odds go up!`, 'gold');
         }
         break;
       case 'cardCaught': {
         const mine = m.byId === this.you?.id;
-        if (this.card) this.burst(this.card.holder.position, '#ffd23f', 80);
+        if (this.card) this.sparkle(this.card.center);
         if (mine) this.sfx.fanfare();
         this.hooks.onCardCaught(m, mine);
         break;
@@ -371,7 +381,13 @@ export class Game {
         break;
       case 'bag':
         this.gold = m.gold;
-        this.hooks.onGold(m.gold);
+        this.hooks.onGold(m.gold, m.goldThisHour);
+        break;
+      case 'prizeWon':
+        this.hooks.onPrizeWon(m.claim);
+        break;
+      case 'banner':
+        this.hooks.onBanner(m.text);
         break;
       case 'dex':
         if (this.you) this.you.dex = m.dex;
@@ -553,28 +569,13 @@ export class Game {
 
   private setCard(info: PublicCard | null): void {
     if (this.card && (!info || info.id !== this.card.info.id)) {
-      this.island.scene.remove(this.card.holder);
+      this.island.scene.remove(this.card.group);
       this.card = null;
     }
     if (info && !this.card) {
-      const rig = buildCritter(speciesById(info.species), { golden: true });
-      rig.group.scale.setScalar(CARD_SCALE);
-      const holder = new THREE.Group();
-      holder.add(rig.group);
-      const tex = this.textureLoader.load(info.image);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 2.38), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }));
-      plane.position.y = CARD_SCALE * 1.35 + 1.5;
-      holder.add(plane);
-      const beam = new THREE.Mesh(BEAM_GEO, BEAM_MAT);
-      beam.scale.set(1.6, 2.2, 1.6);
-      holder.add(beam);
-      const light = new THREE.PointLight('#ffd23f', 18, 14, 1.5);
-      light.position.y = 3;
-      holder.add(light);
-      this.island.scene.add(holder);
-      this.card = { info, rig, holder, plane, light };
-    } else if (info && this.card) this.card.info = info;
+      this.card = new CardSlab(info, this.textureLoader);
+      this.island.scene.add(this.card.group);
+    } else if (info && this.card) this.card.setInfo(info);
     this.hooks.onCard(info);
   }
 
@@ -588,7 +589,7 @@ export class Game {
       if (!this.economy?.launched) return this.hooks.onToast('Golden balls arrive at launch. Pink orbs are free!', 'info');
       if (this.gold <= 0) return this.hooks.onToast('No golden balls yet. Walk over the glowing ones on the island!', 'warn');
       this.gold--;
-      this.hooks.onGold(this.gold);
+      this.hooks.onGold(this.gold, -1);
     }
     this.lastThrow = now;
     if (kind === 'gold' && this.slot !== 2) this.setSlot(2);
@@ -615,11 +616,9 @@ export class Game {
     mesh.position.set(o.x, o.y, o.z);
     this.island.scene.add(mesh);
     const at = this.net.now();
+    // Golden balls are checked against the drawn card every frame (it flees, so no prediction).
     let stopAt: number | null = null;
-    if (kind === 'gold' && this.card) {
-      const c = this.card.info;
-      stopAt = traceHit(o, d, (dt) => cardCenter(cardPose(c.seed, c.releasedAt, at + dt * 1000)), CARD_HIT_RADIUS);
-    } else if (kind === 'orb' && this.economy?.launched) {
+    if (kind === 'orb' && this.economy?.launched) {
       for (const v of this.critters.values()) {
         if (v.caught) continue;
         const p0 = critterPose(v.info, at);
@@ -649,7 +648,8 @@ export class Game {
       const p = this.projectiles[i];
       p.age += dt;
       p.life -= dt;
-      if (p.stopAt !== null && p.age >= p.stopAt) {
+      const hitCard = p.kind === 'gold' && this.card?.group.visible && p.mesh.position.distanceTo(this.card.center) < CARD_HIT_RADIUS;
+      if (hitCard || (p.stopAt !== null && p.age >= p.stopAt)) {
         this.burst(p.mesh.position, p.kind === 'gold' ? '#ffd23f' : '#ff7ab6', 14);
         p.life = 0;
       } else {
@@ -761,7 +761,8 @@ export class Game {
         v.rig.group.position.set(p.x, p.y, p.z);
         v.rig.group.rotation.y = p.heading;
         animateCritter(v.rig, t, v.phase, p.airborne);
-        v.tag.visible = this.playing && Math.hypot(p.x - eye.x, p.z - eye.z) < TAG_RANGE;
+        const dist = Math.hypot(p.x - eye.x, p.z - eye.z);
+        v.tag.visible = this.playing && dist > 4 && dist < TAG_RANGE;
       }
       if (v.dying) {
         const k = 1 - (wall - v.dying) / 450;
@@ -774,13 +775,11 @@ export class Game {
     this.updateCaptures(wall);
 
     if (this.card) {
-      const c = this.card.info;
-      const p = cardPose(c.seed, c.releasedAt, now);
-      this.card.holder.position.set(p.x, p.y, p.z);
-      this.card.rig.group.rotation.y = p.heading;
-      animateCritter(this.card.rig, t, 0, false);
-      this.card.plane.quaternion.copy(this.camera.quaternion);
-      this.card.plane.position.y = CARD_SCALE * 1.35 + 1.5 + Math.sin(t * 2) * 0.15;
+      const from = this.card.update(now - INTERP_DELAY_MS, t, this.camera);
+      if (from) {
+        this.burst(from, '#ffd23f', 30, { star: true, size: 0.8 });
+        this.burst(this.card.center, '#ffd23f', 30, { star: true, size: 0.8 });
+      }
     }
 
     this.updateBalls(t);

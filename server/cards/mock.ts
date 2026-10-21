@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { SPECIES } from '../../shared/species';
-import { mockSig } from '../chain/mock';
 import type { CardListing, CardProvider } from './types';
 
 const FINISH = ['Holo', 'Reverse Holo', 'Full Art', 'Promo', 'Gold Foil', 'Shadowless'];
@@ -30,10 +29,5 @@ export class MockCards implements CardProvider {
 
   async confirmPurchase(): Promise<{ mint: string }> {
     return { mint: `mockMint${randomBytes(12).toString('hex')}` };
-  }
-
-  async transferToWinner(): Promise<string> {
-    await new Promise((r) => setTimeout(r, 400));
-    return mockSig();
   }
 }

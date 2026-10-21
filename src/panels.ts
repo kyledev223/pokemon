@@ -13,11 +13,11 @@ import {
   type Rarity,
   type Region,
 } from '../shared/species';
-import type { YouInfo } from '../shared/protocol';
+import type { MyClaim } from '../shared/prizes';
 import { api, type BattleState, type CollectionItem, type FighterView, type Me, type Offer } from './api';
 import { thumb } from './thumbs';
 import './panels-dex.css';
-import { $, $$, accountLink, closeModal, esc, openModal, shortSig } from './ui';
+import { $, $$, accountLink, closeModal, esc, openModal } from './ui';
 
 // All the modal panels: dex, ranks, arena, market, waitlist + card claim.
 
@@ -423,7 +423,7 @@ function renderMarket(body: HTMLElement, offers: Offer[], me: Me | null): void {
                 <select name="want">${SPECIES.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
               </label>
               <label data-for="sale" hidden>Price in ${esc(BRAND.ticker)} <input name="price" type="number" min="1" step="any" placeholder="1000" /></label>
-              <label data-for="sale" hidden>Your Solana wallet (receives payment) <input name="wallet" placeholder="Paste address" value="${esc(me.you.wallet ?? '')}" /></label>
+              <label data-for="sale" hidden>Your Solana wallet (receives payment) <input name="wallet" placeholder="Paste address"  /></label>
               <div class="row"><button class="btn btn-primary" type="submit">Post offer</button><span class="err"></span></div>
             </form>`
           : '<p class="tiny">Catch a duplicate of any species to post an offer. Your first of each species stays locked.</p>'
@@ -527,33 +527,70 @@ export function openWaitlistJoined(r: { position: number; total: number; bonus: 
   $('#wl-go', body).addEventListener('click', () => closeModal());
 }
 
-export function openClaim(cardName: string, you: YouInfo | null, onDone?: (you: YouInfo) => void, onClose?: AfterClose): void {
-  const body = openModal(
-    `<div class="modal-hero">
-      <span style="font-size:3rem">🎉</span>
-      <h2>You caught ${esc(cardName)}!</h2>
-      <p>${
-        you?.wallet
-          ? `It's on its way to <code>${esc(shortSig(you.wallet))}</code>. You can change the address below if needed.`
-          : 'Paste any Solana wallet address to receive the real card. Read-only: we never ask you to connect or sign anything.'
-      }</p>
-      <form class="form-grid" id="claim-form" style="width:100%">
-        <label>Solana wallet address <input name="wallet" required placeholder="Paste address" value="${esc(you?.wallet ?? '')}" /></label>
-        <div class="row"><button class="btn btn-gold" type="submit">Send my card</button><span class="err"></span></div>
-      </form>
-    </div>`,
-    onClose,
-  );
-  $<HTMLFormElement>('#claim-form', body).addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const wallet = String(new FormData(e.target as HTMLFormElement).get('wallet')).trim();
-    try {
-      const r = await api.setWallet(wallet);
-      onDone?.(r.you);
-      body.innerHTML = `<div class="modal-hero"><span style="font-size:3rem">🃏</span><h2>On its way!</h2><p>The card is being sent to <code>${esc(wallet)}</code>. It'll appear in the Real cards gallery with the transfer receipt.</p></div>`;
-    } catch (err) {
-      errorBox(body, (err as Error).message);
-    }
-  });
+/** Message prefilled in the X DM so the winner only has to add their address. */
+function dmText(claim: MyClaim): string {
+  return `Hi ${BRAND.claimContactX}! I won the real ${claim.prize.name} card on ${BRAND.name}. My claim code is ${claim.code}. Shipping details: `;
 }
 
+function claimBlock(claim: MyClaim): string {
+  const p = claim.prize;
+  const status =
+    p.status === 'shipped' ? '<span class="tag green">📦 Shipped</span>' : claim.verified ? '<span class="tag blue">✓ Verified, shipping soon</span>' : '<span class="tag gold">Waiting for your DM</span>';
+  return `<div class="claim-card">
+      <img src="${esc(p.image)}" alt="${esc(p.name)}" />
+      <div class="claim-info">
+        <div class="row"><b>${esc(p.name)}</b><span class="tag ${p.tier === 'S' ? 'gold' : p.tier === 'A' ? 'pink' : 'blue'}">Tier ${p.tier}</span>${status}</div>
+        <span class="tiny">${esc([p.set, p.grade].filter(Boolean).join(' · ') || 'Real card')}</span>
+        <code class="claim-code">${esc(claim.code)}</code>
+        <div class="row">
+          <button class="btn btn-sm" type="button" data-copy="${esc(claim.code)}">Copy code</button>
+          <a class="btn btn-sm btn-primary" href="https://x.com/messages/compose?text=${encodeURIComponent(dmText(claim))}" target="_blank" rel="noopener">Open X DM</a>
+        </div>
+      </div>
+    </div>`;
+}
+
+function bindCopy(root: HTMLElement): void {
+  $$('[data-copy]', root).forEach((b) =>
+    b.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(b.dataset.copy!).then(() => {
+        b.textContent = 'Copied!';
+        setTimeout(() => (b.textContent = 'Copy code'), 1400);
+      });
+    }),
+  );
+}
+
+/** Shown to the winner the moment their golden ball wins. */
+export function openPrizeWon(claim: MyClaim, onClose?: AfterClose): void {
+  const body = openModal(
+    `<div class="modal-hero">
+      <span class="ico yellow" style="width:64px;height:64px;font-size:2rem">🎉</span>
+      <h2>You won a real card!</h2>
+      <p>Your golden ball caught the real <b>${esc(claim.prize.name)}</b>. This is a one-time claim code, so keep it private.</p>
+    </div>
+    ${claimBlock(claim)}
+    <ol class="claim-steps">
+      <li>DM <b>${esc(BRAND.claimContactX)}</b> on X with this code and your shipping details (name, address, country).</li>
+      <li>We check the code against the winning throw and mark it verified.</li>
+      <li>We mail the card and send you the tracking number.</li>
+    </ol>
+    <p class="tiny">Lost this window? Open <b>🎁 My cards</b> in the game any time from this browser.</p>`,
+    onClose,
+  );
+  bindCopy(body);
+}
+
+/** Every card this browser's trainer has won, with codes and shipping status. */
+export async function openMyClaims(onClose?: AfterClose): Promise<void> {
+  const body = openModal('<h2>🎁 My cards</h2><p>Loading…</p>', onClose);
+  const me = await loadMe();
+  const claims = me?.you.claims ?? [];
+  body.innerHTML = `<h2>🎁 My cards</h2>
+    ${
+      claims.length
+        ? `<p>DM <b>${esc(BRAND.claimContactX)}</b> on X with a claim code and your shipping details. Each code can be redeemed once.</p>${claims.map(claimBlock).join('')}`
+        : '<p>No real cards yet. Golden balls that hit the roaming card slab are rolls to win it.</p>'
+    }`;
+  bindCopy(body);
+}

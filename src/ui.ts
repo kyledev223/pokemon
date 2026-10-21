@@ -7,6 +7,8 @@ export function esc(s: unknown): string {
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 export const pct = (p: number) => `${(p * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}%`;
+/** An odds step in percentage points: 0.00005 → "0.005". */
+export const pts = (step: number) => (step * 100).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 
 export function mmss(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));

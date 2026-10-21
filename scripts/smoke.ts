@@ -11,7 +11,8 @@ import WebSocket from 'ws';
 import type { ServerMsg } from '../shared/protocol';
 import { speciesById } from '../shared/species';
 import { oddsForThrow } from '../shared/fair';
-import { BALL_GRAVITY, EYE_HEIGHT, THROW_SPEED, cardCenter, cardPose, critterCenter, critterPose, resolveMove, terrainHeight, type SpawnInfo, type Vec3 } from '../shared/world';
+import { CLAIM_RE } from '../shared/prizes';
+import { BALL_GRAVITY, EYE_HEIGHT, INTERP_DELAY_MS, THROW_SPEED, critterCenter, critterPose, resolveMove, terrainHeight, type SpawnInfo, type Vec3 } from '../shared/world';
 import { rollsFor, sha256Hex } from '../src/verify';
 
 const PORT = 8799;
@@ -41,6 +42,8 @@ class Client {
   pos: Vec3 = { x: 0, y: 0, z: 0 };
   critters = new Map<string, SpawnInfo>();
   card: any = null;
+  /** Last two server card positions, for aiming at a moving (fleeing) slab. */
+  cardPos: { at: number; x: number; y: number; z: number }[] = [];
   offset = 0;
   gold = 0;
   constructor(readonly token: string) {
@@ -62,6 +65,10 @@ class Client {
       if (m.t === 'critter+') m.spawns.forEach((c) => this.critters.set(c.id, c));
       if (m.t === 'critter-') this.critters.delete(m.id);
       if (m.t === 'card') this.card = m.card;
+      if (m.t === 'cardPos') {
+        this.cardPos.push(m);
+        if (this.cardPos.length > 2 || m.jump) this.cardPos.splice(0, this.cardPos.length - 1);
+      }
     });
   }
   now() {
@@ -101,6 +108,12 @@ class Client {
       await sleep(110);
     }
     return false;
+  }
+  /** Where the card will be drawn at server time `ms`, extrapolated from the last two samples. */
+  cardAt(ms: number): Vec3 {
+    const [a, b] = this.cardPos.length > 1 ? this.cardPos : [this.cardPos[0], this.cardPos[0]];
+    const k = b.at === a.at ? 0 : (ms - INTERP_DELAY_MS - b.at) / (b.at - a.at);
+    return { x: b.x + (b.x - a.x) * k, y: b.y + (b.y - a.y) * k, z: b.z + (b.z - a.z) * k };
   }
   /** Aims a ballistic throw at a moving target. */
   throwAt(kind: 'orb' | 'gold', targetAt: (ms: number) => Vec3) {
@@ -148,15 +161,32 @@ try {
   assert.equal(w1.json.total, 1);
   ok('waitlist: returning keeps spot, same network shares one spot');
 
-  // Admin auth + vault → card purchase → release.
-  assert.equal((await http('POST', '/api/admin/vault', { addUsd: 10 })).status, 401);
-  const v = await http('POST', '/api/admin/vault', { addUsd: 10 }, true);
-  assert.equal(v.status, 200);
+  // Catalog: seeded from the brief, public view never carries claim codes.
+  assert.equal((await http('GET', '/api/admin/prizes')).status, 401);
+  const catalog = await http('GET', '/api/prizes');
+  assert.equal(catalog.json.length, 17);
+  assert.deepEqual(
+    ['S', 'A', 'B'].map((t) => catalog.json.filter((p: any) => p.tier === t).length),
+    [5, 6, 6],
+  );
+  assert.ok(catalog.json.every((p: any) => !('claimCode' in p) && !('claim_code' in p) && p.status === 'available'));
+  ok('prize catalog seeded: 5 Tier S, 6 Tier A, 6 Tier B, no claim codes in public view');
+
+  // Admin settings: fast odds for the test, no teleports, then release a Tier B card.
+  const bad = await http('POST', '/api/admin/settings', { odds: { B: { base: 0.5, step: 0, cap: 0.2 } } }, true);
+  assert.equal(bad.status, 400, 'cap below start must be rejected');
+  const set = await http('POST', '/api/admin/settings', { odds: { B: { base: 0.15, step: 0.05, cap: 0.9 } }, teleportMinutes: 60, everyHours: { B: null } }, true);
+  assert.equal(set.status, 200, JSON.stringify(set.json));
+  const tierB = catalog.json.find((p: any) => p.tier === 'B');
+  const rel = await http('POST', `/api/admin/prizes/${tierB.id}/release`, {}, true);
+  assert.equal(rel.status, 200, JSON.stringify(rel.json));
+  assert.equal((await http('POST', `/api/admin/prizes/${tierB.id}/release`, {}, true)).status, 400, 'one card at a time');
   const st = await http('GET', '/api/status');
-  assert.ok(st.json.card, 'a card should be in play after the vault hits $10');
+  assert.equal(st.json.card.name, tierB.name);
   assert.match(st.json.card.commitment, /^[0-9a-f]{64}$/);
   assert.ok(!('secret' in st.json.card));
-  ok(`vault $10 → bought + released "${st.json.card.name}" with commitment ${st.json.card.commitment.slice(0, 12)}…`);
+  assert.equal(st.json.card.odds.base, 0.15);
+  ok(`admin released "${st.json.card.name}" (Tier B) with commitment ${st.json.card.commitment.slice(0, 12)}…`);
 
   // Join over WebSocket; early bonus lands once.
   const a = new Client(tokA);
@@ -167,6 +197,12 @@ try {
   assert.ok(you);
   assert.equal(you!.you.gold, 10, 'position #1 should get 10 bonus balls');
   ok('launch bonus: 10 golden balls granted on first join');
+
+  // Bob watches from the same island (he must never see Alice's claim code).
+  const b = new Client(tokB);
+  await b.open();
+  b.send({ t: 'hello', token: tokB, name: 'Bob' });
+  await b.waitFor('you');
 
   // Anti-cheat: teleport is rejected.
   const before = { ...a.pos };
@@ -208,50 +244,90 @@ try {
   assert.ok(catchMsg, 'should catch a critter within 25 throws');
   ok(`pink orb caught ${speciesById(catchMsg!.species).name}; dex updated`);
 
-  // Golden balls at the card until it's caught (test tops up the bag directly in the DB).
+  // Golden balls at the fleeing card until it's caught (test tops up the bag directly in the DB).
   const db = new DatabaseSync(dbPath);
-  db.prepare('UPDATE players SET gold = 600 WHERE name = ?').run('Alice');
+  db.prepare('UPDATE players SET gold = 300 WHERE name = ?').run('Alice');
   const card = a.card ?? st.json.card;
+  assert.ok(await a.waitFor('cardPos', () => true, 2000), 'server streams card positions');
   let caught = null;
   let throws = 0;
-  for (; throws < 600 && !caught; throws++) {
-    await a.walkTo(() => cardPose(card.seed, card.releasedAt, a.now()), 7);
-    a.throwAt('gold', (ms) => cardCenter(cardPose(card.seed, card.releasedAt, ms)));
+  for (; throws < 300 && !caught; throws++) {
+    await a.walkTo(() => a.cardAt(a.now()), 17);
+    a.throwAt('gold', (ms) => a.cardAt(ms));
     await sleep(480);
     caught = a.msgs.find((m) => m.t === 'cardCaught') as Extract<ServerMsg, { t: 'cardCaught' }> | undefined;
   }
   assert.ok(caught, 'card should be caught');
   const hits = a.msgs.filter((m) => m.t === 'cardHit').length;
-  ok(`card caught after ${throws} golden throws (${hits} hits), secret revealed`);
+  ok(`fleeing card caught after ${throws} golden throws (${hits} hits, server-simulated), secret revealed`);
 
-  // Verify the full throw log the way the browser does.
+  const prizeWon = (await a.waitFor('prizeWon')) as Extract<ServerMsg, { t: 'prizeWon' }> | null;
+  assert.ok(prizeWon, 'winner gets a private prizeWon message');
+  const code = prizeWon!.claim.code;
+  assert.match(code, CLAIM_RE);
+  assert.ok(!(await b.waitFor('prizeWon', () => true, 300)), 'other players never see the code');
+  assert.ok(!JSON.stringify(b.msgs).includes(code));
+  ok(`winner got one-time claim code ${code.slice(0, 6)}…; nobody else saw it`);
+
+  // Verify the full throw log the way the browser does, with this release's odds.
   const fair = await http('GET', `/api/fair/${card.id}`);
   assert.equal(fair.json.secret, caught!.secret);
   assert.equal(await sha256Hex(fair.json.secret), fair.json.commitment);
   const rolls = await rollsFor(fair.json.secret, card.id, fair.json.throws.length);
   fair.json.throws.forEach((t: any, i: number) => {
     assert.equal(t.index, i);
-    assert.equal(t.odds, oddsForThrow(i));
-    assert.equal(t.won, rolls[i] < oddsForThrow(i));
+    assert.equal(t.odds, oddsForThrow(i, fair.json.odds));
+    assert.equal(t.won, rolls[i] < oddsForThrow(i, fair.json.odds));
   });
   assert.equal(fair.json.throws.findIndex((t: any) => t.won), fair.json.throws.length - 1);
   ok(`verifier: commitment + all ${rolls.length} rolls recomputed, winner is the first winning roll`);
 
-  // Winner pastes a wallet → mock transfer.
-  const wallet = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
-  const ws = await http('POST', '/api/wallet', { token: tokA, wallet });
-  assert.equal(ws.status, 200);
-  const won = await http('GET', '/api/cards/won');
-  assert.equal(won.json.length, 1);
-  assert.ok(won.json[0].transferSig);
-  assert.equal(won.json[0].winnerName, 'Alice');
-  ok('wallet pasted → card delivered (mock transfer sig recorded)');
+  // Claim: public gallery shows Won without the code; admin looks it up, redeems once, ships.
+  const pub = await http('GET', '/api/prizes');
+  const wonPub = pub.json.find((p: any) => p.id === tierB.id);
+  assert.equal(wonPub.status, 'won');
+  assert.equal(wonPub.winnerName, 'Alice');
+  assert.ok(!JSON.stringify(pub.json).includes(code));
+  const look = await http('GET', `/api/admin/claims/${code}`, undefined, true);
+  assert.equal(look.status, 200);
+  assert.equal(look.json.winner.name, 'Alice');
+  assert.equal(look.json.throws.length, fair.json.throws.length);
+  assert.equal(look.json.winningThrow, fair.json.throws.length - 1);
+  assert.equal((await http('POST', `/api/admin/claims/${code}/ship`, { tracking: 'X1' }, true)).status, 409, 'ship needs verify first');
+  assert.equal((await http('POST', `/api/admin/claims/${code}/verify`, {}, true)).status, 200);
+  assert.equal((await http('POST', `/api/admin/claims/${code}/verify`, {}, true)).status, 409, 'a code redeems once');
+  assert.equal((await http('POST', `/api/admin/claims/${code}/ship`, {}, true)).status, 400, 'tracking required');
+  assert.equal((await http('POST', `/api/admin/claims/${code}/ship`, { tracking: 'TRACK123' }, true)).status, 200);
+  assert.equal((await http('GET', '/api/prizes')).json.find((p: any) => p.id === tierB.id).status, 'shipped');
+  assert.equal((await http('GET', '/api/admin/claims/CLAIM-2222-2222', undefined, true)).status, 404);
+  const me = await http('GET', `/api/me?token=${tokA}`);
+  assert.equal(me.json.you.claims[0].code, code);
+  ok('claim: admin lookup → verify once (second is 409) → shipped with tracking; winner still sees their code');
+
+  // Anti-abuse: a golden throw from somewhere you aren't is refused and costs nothing.
+  const goldBefore = (db.prepare('SELECT gold FROM players WHERE name = ?').get('Alice') as any).gold as number;
+  a.send({ t: 'throw', kind: 'gold', o: { x: a.pos.x + 12, y: a.pos.y + 1.5, z: a.pos.z }, d: { x: 1, y: 0, z: 0 }, at: a.now() });
+  await sleep(300);
+  assert.equal((db.prepare('SELECT gold FROM players WHERE name = ?').get('Alice') as any).gold, goldBefore);
+  const logged = db.prepare("SELECT result, COUNT(*) AS n FROM throw_log WHERE kind = 'gold' GROUP BY result").all() as any[];
+  assert.ok(logged.some((r) => r.result === 'rejected:origin'));
+  assert.ok(logged.some((r) => r.result === 'hit'));
+  ok(`throw log: ${logged.map((r) => `${r.n} ${r.result}`).join(', ')}`);
+
+  // Hourly golden-ball cap.
+  await http('POST', '/api/admin/settings', { goldPerHour: 1 }, true);
+  await http('POST', '/api/admin/balls', { n: 30 }, true);
+  const more = (await a.waitFor('balls+', () => true, 2000, a.msgs.length - 5))!;
+  const next = more.balls.sort((p, q) => Math.hypot(p.x - a.pos.x, p.z - a.pos.z) - Math.hypot(q.x - a.pos.x, q.z - a.pos.z))[0];
+  assert.ok(await a.walkTo(() => next, 1));
+  const capMark = a.msgs.length;
+  a.send({ t: 'pickup', id: next.id });
+  assert.ok(await a.waitFor('toast', (m) => m.text.includes('Hourly limit'), 1500, capMark));
+  assert.equal(await a.waitFor('ball-', (m) => m.id === next.id, 500, capMark), null);
+  await http('POST', '/api/admin/settings', { goldPerHour: 20 }, true);
+  ok('hourly golden-ball cap blocks pickups past the limit');
 
   // Market swap between Alice and Bob.
-  const b = new Client(tokB);
-  await b.open();
-  b.send({ t: 'hello', token: tokB, name: 'Bob' });
-  await b.waitFor('you');
   const alice = db.prepare('SELECT id FROM players WHERE name = ?').get('Alice') as { id: string };
   const bob = db.prepare('SELECT id FROM players WHERE name = ?').get('Bob') as { id: string };
   const ins = db.prepare('INSERT INTO critters (owner_id, species, locked, caught_at) VALUES (?, ?, ?, ?)');
@@ -295,6 +371,22 @@ try {
   a.send({ t: 'chat', text: 'spam' });
   assert.equal(await b.waitFor('chat', (m) => m.line.text === 'spam', 600, chatMark), null);
   ok('chat: broadcast, sanitised and rate-limited');
+
+  // Impossible movement gets the account flagged for the admin.
+  for (let i = 0; i < 9; i++) {
+    a.send({ t: 'pos', x: a.pos.x + 80, y: a.pos.y, z: a.pos.z, ry: 0 });
+    await sleep(30);
+  }
+  await sleep(200);
+  const flags = await http('GET', '/api/admin/flags', undefined, true);
+  assert.ok(flags.json.some((f: any) => f.player_name === 'Alice' && f.reason === 'movement'));
+  ok('impossible movement flags the account for review');
+
+  // One account per browser, and a cap on fresh accounts per network.
+  const statuses: number[] = [];
+  for (let i = 0; i < 4; i++) statuses.push((await http('POST', '/api/waitlist', { token: randomBytes(24).toString('hex'), name: `Alt${i}` })).status);
+  assert.deepEqual(statuses, [200, 200, 200, 429]);
+  ok('new-account limit per network (5/day): the 6th fresh browser token is refused');
 
   db.close();
   a.ws.close();

@@ -1,38 +1,21 @@
-import { speciesById } from '../../shared/species';
+import type { Tier } from '../../shared/prizes';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-/** Placeholder graded-slab art for mock cards (original artwork, generated on the fly). */
-export function slabSvg(opts: { name: string; grade: string; set: string; speciesId: number }): string {
-  const s = speciesById(opts.speciesId) ?? speciesById(1);
-  const [gradeWord, gradeNum] = splitGrade(opts.grade);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560">
-  <defs>
-    <linearGradient id="slab" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f7fb"/><stop offset="1" stop-color="#d9e2ec"/></linearGradient>
-    <linearGradient id="art" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.accent}"/><stop offset="1" stop-color="${s.color}"/></linearGradient>
-    <radialGradient id="foil" cx=".3" cy=".2" r=".9"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></radialGradient>
-  </defs>
-  <rect x="6" y="6" width="388" height="548" rx="26" fill="url(#slab)" stroke="#b8c4d0" stroke-width="4"/>
-  <rect x="26" y="24" width="348" height="74" rx="12" fill="#e63e6d"/>
-  <text x="42" y="54" font-family="Arial, sans-serif" font-weight="700" font-size="20" fill="#fff">${esc(opts.name.slice(0, 26))}</text>
-  <text x="42" y="80" font-family="Arial, sans-serif" font-size="14" fill="#ffe0ea">${esc(opts.set)} · #${String(s.id).padStart(3, '0')}</text>
-  <text x="358" y="58" text-anchor="end" font-family="Arial, sans-serif" font-weight="800" font-size="34" fill="#fff">${esc(gradeNum)}</text>
-  <text x="358" y="82" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#fff">${esc(gradeWord)}</text>
-  <rect x="44" y="118" width="312" height="418" rx="14" fill="#ffcf3f"/>
-  <rect x="58" y="132" width="284" height="210" rx="8" fill="url(#art)"/>
-  <circle cx="200" cy="250" r="66" fill="${s.color}" stroke="#fff" stroke-width="6"/>
-  <circle cx="176" cy="238" r="12" fill="#fff"/><circle cx="224" cy="238" r="12" fill="#fff"/>
-  <circle cx="179" cy="240" r="6" fill="#222"/><circle cx="227" cy="240" r="6" fill="#222"/>
-  <path d="M182 272 Q200 286 218 272" stroke="#222" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <rect x="58" y="132" width="284" height="210" rx="8" fill="url(#foil)"/>
-  <text x="200" y="384" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="24" fill="#5b3a00">${esc(s.name)}</text>
-  <text x="200" y="414" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" fill="#6b4a10">${s.rarity.toUpperCase()} · ${s.element.toUpperCase()}</text>
-  <rect x="78" y="440" width="244" height="2" fill="#c99a1a"/>
-  <text x="200" y="476" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b4a10">Placeholder art · mock card provider</text>
-</svg>`;
-}
+const TIER_COLOR: Record<Tier, string> = { S: '#ffc928', A: '#ff5ea8', B: '#3fa7ff' };
 
-function splitGrade(grade: string): [string, string] {
-  const m = grade.match(/^(.*?)(\d+(\.\d+)?)\s*$/);
-  return m ? [m[1].trim(), m[2]] : [grade, ''];
+/** Stand-in slab shown until the admin uploads a photo of the real card. Text only, no artwork. */
+export function prizeSvg(opts: { name: string; set: string; grade: string; tier: Tier }): string {
+  const color = TIER_COLOR[opts.tier];
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560">
+  <rect x="6" y="6" width="388" height="548" rx="26" fill="#f4f7fb" stroke="#2a2140" stroke-width="6"/>
+  <rect x="26" y="24" width="348" height="78" rx="14" fill="${color}" stroke="#2a2140" stroke-width="4"/>
+  <text x="44" y="58" font-family="Fredoka, Arial, sans-serif" font-weight="700" font-size="24" fill="#2a2140">${esc(opts.name.slice(0, 24))}</text>
+  <text x="44" y="86" font-family="Fredoka, Arial, sans-serif" font-size="16" fill="#2a2140">${esc((opts.set || 'Set to be added').slice(0, 34))}</text>
+  <text x="356" y="72" text-anchor="end" font-family="Fredoka, Arial, sans-serif" font-weight="700" font-size="30" fill="#2a2140">${opts.tier}</text>
+  <rect x="44" y="124" width="312" height="380" rx="16" fill="#fff8ee" stroke="#2a2140" stroke-width="4" stroke-dasharray="14 10"/>
+  <text x="200" y="300" text-anchor="middle" font-family="Fredoka, Arial, sans-serif" font-weight="700" font-size="26" fill="#6b6185">Photo coming soon</text>
+  <text x="200" y="334" text-anchor="middle" font-family="Fredoka, Arial, sans-serif" font-size="18" fill="#6b6185">${esc((opts.grade || 'Real card').slice(0, 30))}</text>
+  <text x="200" y="534" text-anchor="middle" font-family="Fredoka, Arial, sans-serif" font-size="14" fill="#6b6185">Real card prize · Tier ${opts.tier}</text>
+</svg>`;
 }

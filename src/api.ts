@@ -1,4 +1,5 @@
-import type { Economy, PublicCard, WonCard, YouInfo } from '../shared/protocol';
+import type { Economy, PublicCard, YouInfo } from '../shared/protocol';
+import type { PublicPrize, Tier, TierOdds } from '../shared/prizes';
 import type { Move } from '../shared/species';
 
 const TOKEN_KEY = 'cove.token';
@@ -60,8 +61,16 @@ export interface Status {
   economy: Economy;
   card: PublicCard | null;
   waitlistTotal: number;
-  odds: { base: number; step: number; cap: number; expectedHits: number };
+  tiers: Record<Tier, TierInfo>;
   masterWinner: { name: string } | null;
+}
+
+export interface TierInfo {
+  odds: TierOdds;
+  expectedHits: number;
+  /** Hours between automatic releases; null = manual drops only. */
+  everyHours: number | null;
+  available: number;
 }
 
 export interface CollectionItem {
@@ -90,24 +99,25 @@ export interface Offer {
   createdAt: number;
 }
 
+/** One card release on the Verify page (`id` is the cardId in the HMAC message). */
 export interface FairCard {
   id: string;
   name: string;
+  tier: Tier;
+  /** in_play | caught | recalled */
   status: string;
   commitment: string;
   memoSig: string;
   throws: number;
   revealed: boolean;
+  odds: TierOdds;
+  releasedAt: number;
 }
 
-export interface FairDetail {
-  id: string;
-  name: string;
-  status: string;
-  commitment: string;
-  memoSig: string;
+export interface FairDetail extends Omit<FairCard, 'throws'> {
   secret: string | null;
   winnerName: string | null;
+  endedAt: number | null;
   throws: { index: number; player: string; odds: number; won: boolean; at: number }[];
 }
 
@@ -118,8 +128,7 @@ export const api = {
   waitlist: (name: string) =>
     req<{ position: number; total: number; bonus: number; sameNetwork: boolean }>('POST', '/api/waitlist', { token: token(), name }),
   me: () => req<Me>('GET', `/api/me?token=${token()}`),
-  setWallet: (wallet: string) => req<{ you: YouInfo }>('POST', '/api/wallet', { token: token(), wallet }),
-  wonCards: () => req<WonCard[]>('GET', '/api/cards/won'),
+  prizes: () => req<PublicPrize[]>('GET', '/api/prizes'),
   fairList: () => req<FairCard[]>('GET', '/api/fair'),
   fair: (id: string) => req<FairDetail>('GET', `/api/fair/${encodeURIComponent(id)}`),
   ranks: () => req<{ dex: Ranked; hits: Ranked; cards: Ranked; arena: Ranked }>('GET', '/api/ranks'),

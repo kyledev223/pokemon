@@ -1833,3 +1833,100 @@ button.dex-cell.picked {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
 }
+
+/* ── Real-card claims ───────────────────────────────────────────── */
+
+.claim-card {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  background: var(--bg);
+}
+.claim-card img {
+  width: 110px;
+  aspect-ratio: 5 / 7;
+  object-fit: cover;
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+}
+.claim-info {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.claim-code {
+  justify-self: start;
+  font-size: 1.35rem;
+  letter-spacing: 0.06em;
+  padding: 0.15em 0.6em;
+  background: var(--yellow);
+}
+.claim-steps {
+  margin: 0;
+  padding-left: 1.3em;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+@media (max-width: 520px) {
+  .claim-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .claim-card img {
+    width: 140px;
+    align-self: center;
+  }
+}
+
+.card-banner {
+  padding: 0.45em 1.1em;
+  border: var(--line);
+  border-radius: 999px;
+  background: var(--gold);
+  box-shadow: var(--shadow);
+  font-weight: 700;
+  text-align: center;
+  animation: toast-in 0.3s ease-out;
+}
+
+.sub-head {
+  margin: 36px 0 16px;
+  font-size: 1.5rem;
+}
+.tier-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.tier-box {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  background: var(--card);
+  font-size: 0.9rem;
+}
+.tier-box b {
+  font-size: 1.1rem;
+}
+.tier-box span {
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .tier-strip {
+    grid-template-columns: 1fr;
+  }
+}
+.slab.loose {
+  background: #fff6cf;
+  box-shadow: 4px 4px 0 var(--pink);
+}

@@ -1,5 +1,5 @@
 // Prints a coarse ASCII map of the island and sanity-checks spawn helpers.
-import { terrainHeight, CAVE, BAZAAR, ARENA, DEX_MASTER, inlandWater, pathDistance, randomLandPoint, randomOceanPoint, randomCavePoint, inCaveDoor, cardPose, resolveMove } from '../shared/world';
+import { terrainHeight, CAVE, BAZAAR, ARENA, DEX_MASTER, inlandWater, pathDistance, randomLandPoint, randomOceanPoint, randomCavePoint, inCaveDoor, resolveMove } from '../shared/world';
 const rows: string[] = [];
 for (let z = -120; z <= 120; z += 6) {
   let line = '';
@@ -27,8 +27,6 @@ for (let i = 0; i < 200; i++) { const p = randomLandPoint(r); const h = terrainH
 console.log('land spawn h range', minH.toFixed(2), maxH.toFixed(2));
 for (let i = 0; i < 3; i++) { const p = randomOceanPoint(r); console.log('ocean', p.x.toFixed(1), p.z.toFixed(1), terrainHeight(p.x, p.z).toFixed(2)); }
 for (let i = 0; i < 3; i++) { const p = randomCavePoint(r); console.log('cave', p.x.toFixed(1), p.z.toFixed(1), terrainHeight(p.x, p.z).toFixed(2)); }
-let bad = 0; for (let t = 0; t < 3600 * 6; t += 5) { const p = cardPose(1234, 0, t * 1000); if (p.y < 0.5) bad++; }
-console.log('card underwater samples', bad);
 // walk into cave from plaza along path
 let x = 0, z = 0; const ex = Math.cos(CAVE.doorAngle), ez = Math.sin(CAVE.doorAngle);
 const target = { x: CAVE.x, z: CAVE.z };
