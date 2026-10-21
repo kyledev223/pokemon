@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fff8ee" />
+    <meta name="robots" content="noindex" />
+    <title>Island Admin</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body class="admin">
+    <main class="section">
+      <div class="section-head">
+        <span class="section-icon">🛠️</span>
+        <h2>Island admin</h2>
+        <p>Operator controls. Every action is server-side and requires the admin token.</p>
+      </div>
+      <form class="form-grid" id="login">
+        <label>Admin token <input id="admin-token" type="password" autocomplete="current-password" /></label>
+        <div class="row"><button class="btn btn-primary" type="submit">Connect</button><span class="err" id="admin-err"></span></div>
+      </form>
+      <div id="admin-ui" hidden>
+        <div class="row" style="margin: 16px 0">
+          <button class="btn btn-primary" data-act="launch">🚀 Launch</button>
+          <button class="btn btn-ghost" data-act="unlaunch">⏪ Back to pre-launch</button>
+          <button class="btn btn-gold" data-act="claim">⚡ Claim fees now</button>
+          <button class="btn btn-ghost" data-act="vault">💰 Add $10 to vault</button>
+          <button class="btn btn-ghost" data-act="balls">🟡 Drop 20 balls</button>
+          <button class="btn btn-ghost" data-act="event">🌟 Legendary event</button>
+        </div>
+        <div class="stat-tiles" id="admin-tiles"></div>
+        <div class="ranks-grid" style="margin-top: 16px">
+          <div class="rank-box"><h3>Card in play / queue</h3><div id="admin-cards"></div></div>
+          <div class="rank-box"><h3>Pending deliveries</h3><div id="admin-pending"></div></div>
+          <div class="rank-box"><h3>Recent fee claims</h3><div class="table-wrap" id="admin-claims"></div></div>
+          <div class="rank-box"><h3>Recent golden hits</h3><div class="table-wrap" id="admin-throws"></div></div>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/admin.ts"></script>
+  </body>
+</html>

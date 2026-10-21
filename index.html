@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#fff8ee" />
+    <title>Candy Cove · catch real cards on a shared island</title>
+    <meta name="description" content="A shared 3D island where creator fees rain golden balls and real graded cards roam free. Throw, catch, collect." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="nav" id="nav">
+      <a class="logo" href="#play" aria-label="Home">
+        <img src="/favicon.svg" alt="" width="34" height="34" />
+        <span data-brand>Candy Cove</span>
+      </a>
+      <nav class="nav-links" id="nav-links">
+        <a href="#early">Early bonus</a>
+        <a href="#how">How it works</a>
+        <a href="#cards">Real cards</a>
+        <a href="#market">Market</a>
+        <a href="#verify">Verify</a>
+      </nav>
+      <button class="pill ca-pill" id="ca-pill" type="button">CA soon</button>
+      <a class="btn btn-primary btn-sm" id="buy-btn" href="#" target="_blank" rel="noopener">Buy <span data-ticker>$COVE</span></a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">☰</button>
+    </header>
+
+    <main>
+      <!-- ── 1. Play ───────────────────────────────────────────────── -->
+      <section id="play" class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-dot"></span> <span id="hero-status">Pre-launch lobby is open</span></p>
+          <h1>Catch a <em>real</em> graded card on a shared island.</h1>
+          <p class="lede" data-tagline>A shared island where creator fees rain golden balls and real graded cards roam free.</p>
+        </div>
+
+        <div class="game-shell" id="game-shell">
+          <canvas id="game-canvas" aria-label="3D island game"></canvas>
+
+          <div class="hud" id="hud">
+            <div class="hud-tl">
+              <div class="panel card-panel">
+                <div class="panel-label">🃏 Real card in play</div>
+                <div class="card-body" id="hud-card"><span class="muted">Waiting for the vault…</span></div>
+              </div>
+              <div class="panel econ">
+                <div class="econ-row"><span>⚡ Next golden drop</span><b id="hud-drop">--:--</b></div>
+                <div class="econ-row">
+                  <span>Card vault <b id="hud-vault">$0.00</b> / next card at <b id="hud-threshold">$10</b></span>
+                </div>
+                <div class="bar"><i id="hud-vault-bar"></i></div>
+              </div>
+            </div>
+
+            <div class="hud-tr">
+              <span class="chip"><i class="dot"></i><b id="hud-online">0</b>&nbsp;online</span>
+              <button class="chip" type="button" data-open="dex">📖 Dex <b id="hud-dex">0/30</b></button>
+              <button class="chip" type="button" data-open="arena">⚔️ Arena</button>
+              <button class="chip" type="button" data-open="ranks">🏆 Ranks</button>
+              <button class="chip" type="button" data-open="market">🏪 Market</button>
+              <button class="chip" type="button" id="hud-sound" aria-label="Toggle sound">🔊</button>
+            </div>
+
+            <div class="crosshair" aria-hidden="true"></div>
+            <div class="prompt" id="hud-prompt" hidden></div>
+            <div class="event-banner" id="hud-event" hidden></div>
+            <div class="toasts" id="toasts" aria-live="polite"></div>
+
+            <div class="hotbar" id="hotbar">
+              <button class="slot active" type="button" data-slot="1" aria-label="Pink orb">
+                <span class="ball pink"></span><small>1</small><b>∞</b>
+              </button>
+              <button class="slot" type="button" data-slot="2" aria-label="Golden ball">
+                <span class="ball gold"></span><small>2</small><b id="hud-gold">0</b>
+              </button>
+            </div>
+
+            <div class="controls-hint" id="controls-hint">
+              <b>WASD/ZQSD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>Click</b> throw · <b>Right click / F</b> golden ball ·
+              <b>1/2 / wheel</b> switch · <b>C</b> dex · <b>M</b> sound · <b>Esc</b> pause
+            </div>
+
+            <div class="touch-ui" id="touch-ui">
+              <div class="stick-zone" id="stick-zone"><div class="stick" id="stick"><i></i></div></div>
+              <div class="look-zone" id="look-zone"></div>
+              <div class="touch-buttons">
+                <button type="button" class="tbtn gold" id="t-gold" aria-label="Throw golden ball"><span class="ball gold"></span></button>
+                <button type="button" class="tbtn pink" id="t-pink" aria-label="Throw pink orb"><span class="ball pink"></span></button>
+                <button type="button" class="tbtn jump" id="t-jump">JUMP</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="overlay" id="start-overlay">
+            <form class="start-card" id="start-form">
+              <h2 id="start-title">🎟️ Join the pre-launch lobby</h2>
+              <p id="start-sub">Hang out in the glass lobby above the island and toss pink orbs off the edge while we get ready.</p>
+              <label class="sr-only" for="name-input">Trainer name</label>
+              <input id="name-input" name="name" maxlength="16" autocomplete="nickname" placeholder="Trainer name" required />
+              <button class="btn btn-primary btn-lg" type="submit" id="enter-btn">Enter the lobby</button>
+              <p class="tiny">No wallet, no sign-up. Your spot is saved for this network + browser.</p>
+            </form>
+          </div>
+
+          <div class="overlay pause" id="pause-overlay" hidden>
+            <div class="start-card">
+              <h2>Paused</h2>
+              <p>Click to jump back in.</p>
+            </div>
+          </div>
+
+          <button class="fs-btn" id="fs-btn" type="button" aria-label="Fullscreen">⤢</button>
+        </div>
+      </section>
+
+      <!-- ── 2. Early bonus ────────────────────────────────────────── -->
+      <section id="early" class="section">
+        <div class="section-head">
+          <span class="section-icon">⚡</span>
+          <h2>Early players get more golden balls</h2>
+          <p>Join the lobby before launch. The earlier your spot, the bigger the bag waiting for you on day one.</p>
+        </div>
+        <div class="stat-tiles">
+          <div class="tile">
+            <span class="tile-label">🎟️ Your spot</span>
+            <b class="tile-value" id="early-spot">-</b>
+            <span class="tile-note" id="early-bonus">Join to claim one</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Trainers in line</span>
+            <b class="tile-value" id="early-total">0</b>
+            <span class="tile-note">and counting</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Time until launch</span>
+            <b class="tile-value" id="early-countdown">Soon</b>
+            <span class="tile-note" id="early-launch-note">Follow us for the date</span>
+          </div>
+        </div>
+        <ol class="steps">
+          <li><b>One spot per network.</b> It's saved in this browser. Come back any time; you never move down the line.</li>
+          <li><b>No wallet, no sign-up.</b> Pick a trainer name and hop into the lobby. That's it.</li>
+          <li><b>Bonus at launch.</b> Your early golden balls land in your bag once, the first time you play after launch.</li>
+        </ol>
+        <div class="bonus-table">
+          <span><b>#1–100</b> 10 🟡</span><span><b>#101–500</b> 6 🟡</span><span><b>#501–2000</b> 4 🟡</span><span><b>2001+</b> 2 🟡</span>
+        </div>
+      </section>
+
+      <!-- ── 3. How it works ───────────────────────────────────────── -->
+      <section id="how" class="section">
+        <div class="section-head">
+          <span class="section-icon">🎯</span>
+          <h2>How it works from launch</h2>
+          <p>Every trade of <span data-ticker>$COVE</span> pays creator fees. Every few minutes we claim them on-chain and pour them into the island.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="feature-icon">⚡</span>
+            <h3>Fees spawn golden balls</h3>
+            <p>Each claim scatters golden balls across the island. Walk over one to put it in your bag. First come, first served.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon">🃏</span>
+            <h3>A real card roams free</h3>
+            <p>The rest fills a USDC vault. At <b class="js-threshold">$10</b> we buy a real graded card and release it as a creature wandering the island.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon">🎯</span>
+            <h3>Hit it with golden balls</h3>
+            <p>Every hit is a roll. Odds start at <b>0.4%</b> and climb <b>+0.012 pts</b> with every miss, up to 25%. Anyone's hit can be the one.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon">🎁</span>
+            <h3>Catch it, claim it</h3>
+            <p>Land the winning throw and paste any Solana wallet. No signature needed. The tokenized card is sent straight to you.</p>
+          </article>
+        </div>
+
+        <div class="callout pink-callout">
+          <span class="callout-icon">📖</span>
+          <div>
+            <h3>Pink orbs are free and unlimited</h3>
+            <p>
+              Throw them at the island's critters to fill your dex: <b>30 island species</b> plus three extensions, <b>Ocean</b> (they swim offshore),
+              <b>Sky</b> (they land for a few seconds) and <b>Cave</b> (deep in the crystal mountain). Legendaries only show up during rare timed events.
+              The first trainer to complete everything wins a mystery <b>Master card</b>.
+            </p>
+          </div>
+        </div>
+
+        <div class="stat-callouts">
+          <div class="stat-callout"><b id="how-hits">~88</b><span>average hits to catch a card</span></div>
+          <div class="stat-callout"><b>0.4% → 25%</b><span>+0.012 pts per miss, capped at 25%</span></div>
+          <div class="stat-callout"><b id="how-caught">0</b><span>real cards caught so far</span></div>
+        </div>
+
+        <div class="token-row">
+          <span class="token-label">Token address</span>
+          <code id="token-address">Announced at launch</code>
+          <button class="btn btn-ghost btn-sm" id="token-copy" type="button" disabled>Copy</button>
+          <a class="btn btn-ghost btn-sm" id="token-solscan" href="#" target="_blank" rel="noopener" aria-disabled="true">Solscan ↗</a>
+        </div>
+      </section>
+
+      <!-- ── 4. Real cards won ─────────────────────────────────────── -->
+      <section id="cards" class="section">
+        <div class="section-head">
+          <span class="section-icon">🃏</span>
+          <h2>Real cards won</h2>
+          <p>Every card caught on the island, who caught it and the on-chain receipts.</p>
+        </div>
+        <div class="slab-grid" id="cards-grid">
+          <div class="empty">
+            <span>🃏</span>
+            <p>No cards caught yet. The first one could be yours.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 5. Market ─────────────────────────────────────────────── -->
+      <section id="market" class="section">
+        <div class="section-head">
+          <span class="section-icon">🏪</span>
+          <h2>Critter Market</h2>
+          <p>Trade duplicates with other trainers at the bazaar at the end of the south-west path, or right here.</p>
+        </div>
+        <ol class="steps steps-3">
+          <li><b>Post offers without a wallet.</b> List a duplicate critter and name the species you want back.</li>
+          <li><b>Instant swaps.</b> When someone has what you want, the trade settles the moment they accept.</li>
+          <li><b>Sales settle in <span data-ticker>$COVE</span>.</b> Prefer tokens? Set a price; the buyer pays your wallet on Solana.</li>
+        </ol>
+        <p class="note">🔒 The first catch of each species stays locked in your dex, so you can never trade away progress.</p>
+        <button class="btn btn-primary btn-lg" id="open-market" type="button">🏪 Open the Critter Market</button>
+      </section>
+
+      <!-- ── 6. Verify ─────────────────────────────────────────────── -->
+      <section id="verify" class="section">
+        <div class="section-head">
+          <span class="section-icon">🔒</span>
+          <h2>Provably fair</h2>
+          <p>We can't pick the winner, and you can check it yourself.</p>
+        </div>
+        <ol class="steps fair-steps">
+          <li><b>Commit.</b> When a card is released the server draws a random 32-byte <code>secret</code> and publishes <code>sha256(secret)</code>, also written in an on-chain memo.</li>
+          <li><b>Roll.</b> Throw #n (index <code>i = n − 1</code>) wins if <code>HMAC-SHA256(secret, "cardId:i")</code>, read as a number in [0,1), is below that throw's odds.</li>
+          <li><b>Reveal.</b> After the catch the secret is published. Your browser re-computes every roll; nothing is trusted.</li>
+        </ol>
+        <p class="note">Number format: the first 13 hex characters (52 bits) of the HMAC digest divided by 2<sup>52</sup>. The HMAC key is the raw secret bytes.</p>
+
+        <div class="verifier">
+          <div class="verifier-controls">
+            <label>Card
+              <select id="verify-card"><option value="">Loading…</option></select>
+            </label>
+            <button class="btn btn-primary" id="verify-run" type="button">Verify every throw</button>
+          </div>
+          <details>
+            <summary>Or paste values manually</summary>
+            <div class="manual-grid">
+              <label>Card ID <input id="verify-id" placeholder="card_…" /></label>
+              <label>Secret (hex) <input id="verify-secret" placeholder="64 hex chars" /></label>
+              <label>Commitment (hex) <input id="verify-commit" placeholder="sha256 of secret" /></label>
+            </div>
+          </details>
+          <div class="verify-out" id="verify-out"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <a class="logo" href="#play"><img src="/favicon.svg" alt="" width="28" height="28" /><span data-brand>Candy Cove</span></a>
+        <p>
+          <span data-brand>Candy Cove</span> is a memecoin game. All creatures are original. Not affiliated with, endorsed by or sponsored by any trading card
+          company. Card prizes are third-party graded collectibles. Nothing here is financial advice.
+        </p>
+        <div class="socials">
+          <a id="social-x" href="#" target="_blank" rel="noopener">𝕏 Twitter</a>
+          <a id="social-tg" href="#" target="_blank" rel="noopener">✈️ Telegram</a>
+        </div>
+      </div>
+    </footer>
+
+    <dialog class="modal" id="modal">
+      <form method="dialog" class="modal-close-form"><button class="modal-x" aria-label="Close">×</button></form>
+      <div class="modal-body" id="modal-body"></div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

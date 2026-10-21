@@ -1,0 +1,39 @@
+{
+  "name": "candy-cove",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A shared first-person 3D island where memecoin creator fees spawn golden balls and real graded cards roam free.",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch --clear-screen=false server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test-fair.ts && tsx scripts/smoke.ts",
+    "world:map": "tsx scripts/inspect-world.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "dotenv": "^18.0.8",
+    "fastify": "^5.12.7",
+    "three": "^0.186.1",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "ws": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
