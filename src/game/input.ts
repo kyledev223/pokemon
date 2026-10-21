@@ -4,6 +4,8 @@ export class Input {
   lookX = 0;
   lookY = 0;
   joy = { x: 0, y: 0 };
+  /** Right virtual stick: look rate in [-1, 1] per axis. */
+  lookJoy = { x: 0, y: 0 };
   jump = false;
   readonly isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
   active = false;
@@ -15,7 +17,7 @@ export class Input {
   constructor(private canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => {
       if (!this.active || isTyping(e.target)) return;
-      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+      if (['Space', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.code)) e.preventDefault();
       if (!e.repeat) this.onKey(e.code);
       this.keys.add(e.code);
       if (e.code === 'Space') this.jump = true;
@@ -55,56 +57,18 @@ export class Input {
     p?.catch?.(() => {});
   }
 
-  /** Wires the on-screen joystick, look pad and buttons. */
-  bindTouch(els: { stickZone: HTMLElement; stick: HTMLElement; look: HTMLElement; pink: HTMLElement; gold: HTMLElement; jump: HTMLElement }): void {
-    const knob = els.stick.querySelector('i') as HTMLElement;
-    let stickId: number | null = null;
-    let origin = { x: 0, y: 0 };
-    const R = 46;
-    els.stickZone.addEventListener('pointerdown', (e) => {
-      stickId = e.pointerId;
-      els.stickZone.setPointerCapture(e.pointerId);
-      const rect = els.stick.getBoundingClientRect();
-      origin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      move(e);
-    });
-    const move = (e: PointerEvent) => {
-      if (e.pointerId !== stickId) return;
-      let dx = e.clientX - origin.x;
-      let dy = e.clientY - origin.y;
-      const d = Math.hypot(dx, dy);
-      if (d > R) {
-        dx = (dx / d) * R;
-        dy = (dy / d) * R;
-      }
-      knob.style.transform = `translate(${dx}px, ${dy}px)`;
-      this.joy = { x: dx / R, y: -dy / R };
-    };
-    const end = (e: PointerEvent) => {
-      if (e.pointerId !== stickId) return;
-      stickId = null;
-      knob.style.transform = '';
-      this.joy = { x: 0, y: 0 };
-    };
-    els.stickZone.addEventListener('pointermove', move);
-    els.stickZone.addEventListener('pointerup', end);
-    els.stickZone.addEventListener('pointercancel', end);
-
-    const looks = new Map<number, { x: number; y: number }>();
-    els.look.addEventListener('pointerdown', (e) => {
-      els.look.setPointerCapture(e.pointerId);
-      looks.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    });
-    els.look.addEventListener('pointermove', (e) => {
-      const last = looks.get(e.pointerId);
-      if (!last) return;
-      this.lookX += (e.clientX - last.x) * 2.2;
-      this.lookY += (e.clientY - last.y) * 2.2;
-      looks.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    });
-    const lookEnd = (e: PointerEvent) => looks.delete(e.pointerId);
-    els.look.addEventListener('pointerup', lookEnd);
-    els.look.addEventListener('pointercancel', lookEnd);
+  /** Wires the twin virtual joysticks (move left, look right) and the buttons. */
+  bindTouch(els: {
+    stickZone: HTMLElement;
+    stick: HTMLElement;
+    look: HTMLElement;
+    lookStick: HTMLElement;
+    pink: HTMLElement;
+    gold: HTMLElement;
+    jump: HTMLElement;
+  }): void {
+    joystick(els.stickZone, els.stick, (x, y) => (this.joy = { x, y }));
+    joystick(els.look, els.lookStick, (x, y) => (this.lookJoy = { x, y: -y }));
 
     const tap = (el: HTMLElement, fn: () => void) =>
       el.addEventListener('pointerdown', (e) => {
@@ -140,6 +104,43 @@ export class Input {
     this.lookY = 0;
     return out;
   }
+}
+
+/** A virtual stick anchored to its resting spot; reports a vector in the unit disc (y up). */
+function joystick(zone: HTMLElement, stick: HTMLElement, onMove: (x: number, y: number) => void): void {
+  const knob = stick.querySelector('i') as HTMLElement;
+  const R = 46;
+  let id: number | null = null;
+  let origin = { x: 0, y: 0 };
+  const move = (e: PointerEvent) => {
+    if (e.pointerId !== id) return;
+    let dx = e.clientX - origin.x;
+    let dy = e.clientY - origin.y;
+    const d = Math.hypot(dx, dy);
+    if (d > R) {
+      dx = (dx / d) * R;
+      dy = (dy / d) * R;
+    }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    onMove(dx / R, -dy / R);
+  };
+  const end = (e: PointerEvent) => {
+    if (e.pointerId !== id) return;
+    id = null;
+    knob.style.transform = '';
+    onMove(0, 0);
+  };
+  zone.addEventListener('pointerdown', (e) => {
+    if (id !== null) return;
+    id = e.pointerId;
+    zone.setPointerCapture(e.pointerId);
+    const rect = stick.getBoundingClientRect();
+    origin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    move(e);
+  });
+  zone.addEventListener('pointermove', move);
+  zone.addEventListener('pointerup', end);
+  zone.addEventListener('pointercancel', end);
 }
 
 function isTyping(t: EventTarget | null): boolean {

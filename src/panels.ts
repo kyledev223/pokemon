@@ -1,8 +1,22 @@
 import { BRAND } from '../shared/brand';
-import { REGIONS, REGION_LABEL, SPECIES, speciesById, type Region } from '../shared/species';
+import {
+  REGIONS,
+  REGION_LABEL,
+  SPECIES,
+  STAT_MAX,
+  levelFor,
+  movesFor,
+  speciesById,
+  statsAtLevel,
+  weaknessesOf,
+  type Element,
+  type Rarity,
+  type Region,
+} from '../shared/species';
 import type { YouInfo } from '../shared/protocol';
-import { api, type CollectionItem, type Me, type Offer } from './api';
+import { api, type BattleState, type CollectionItem, type FighterView, type Me, type Offer } from './api';
 import { thumb } from './thumbs';
+import './panels-dex.css';
 import { $, $$, accountLink, closeModal, esc, openModal, shortSig } from './ui';
 
 // All the modal panels: dex, ranks, arena, market, waitlist + card claim.
@@ -24,42 +38,136 @@ function errorBox(root: HTMLElement, msg: string): void {
 
 // ── Dex ──────────────────────────────────────────────────────────────
 
+const ELEMENT_ICON: Record<Element | 'neutral', string> = {
+  leaf: '🍃',
+  ember: '🔥',
+  tide: '💧',
+  spark: '⚡',
+  stone: '🪨',
+  breeze: '🌬️',
+  neutral: '✦',
+};
+
+const rarityLabel = (r: Rarity) => r[0].toUpperCase() + r.slice(1);
+const dexNo = (id: number) => `#${String(id).padStart(3, '0')}`;
+
+function elementChip(e: Element | 'neutral'): string {
+  return `<span class="el-chip el-${e}">${ELEMENT_ICON[e]} ${e}</span>`;
+}
+
+function statBar(label: string, value: number, max: number, cls: string): string {
+  const w = Math.max(4, Math.min(100, (value / max) * 100));
+  return `<div class="stat-row"><span>${label}</span><div class="stat-bar ${cls}"><i style="width:${w}%"></i></div><b>${value}</b></div>`;
+}
+
 export async function openDex(onClose?: AfterClose): Promise<void> {
-  const body = openModal('<h2>📖 Dex</h2><p>Loading…</p>', onClose);
+  const body = openModal('<h2>📖 My dex</h2><p>Loading…</p>', onClose, { wide: true });
   const me = await loadMe();
   const owned = new Map<number, number>();
   for (const c of me?.collection ?? []) owned.set(c.species, (owned.get(c.species) ?? 0) + 1);
   let region: Region = 'base';
+  const firstIn = (r: Region) => SPECIES.find((s) => s.region === r && owned.has(s.id))?.id ?? SPECIES.find((s) => s.region === r)!.id;
+  let selected = firstIn(region);
+
+  const caughtIn = (r: Region) => SPECIES.filter((s) => s.region === r && owned.has(s.id)).length;
+  const totalIn = (r: Region) => SPECIES.filter((s) => s.region === r).length;
+  const speciesCaught = SPECIES.filter((s) => owned.has(s.id)).length;
+  const copies = [...owned.values()].reduce((a, n) => a + n, 0);
+  const baseCaught = caughtIn('base');
+  const baseTotal = totalIn('base');
+
+  const detail = (id: number) => {
+    const s = speciesById(id);
+    const n = owned.get(id) ?? 0;
+    const legend = s.rarity === 'legendary' ? '<p class="tiny dx-legend-note">🌟 Only appears during legendary events</p>' : '';
+    if (!n) {
+      return `<div class="dx-portrait unknown"><img src="${thumb(id, { silhouette: true })}" alt="" /></div>
+        <div class="dx-name"><h3>???</h3><span class="muted">${dexNo(id)}</span></div>
+        <div class="dx-tags"><span class="tag ${rarityClass(s.rarity)}">${rarityLabel(s.rarity)}</span><span class="tag">${REGION_LABEL[s.region]}</span></div>
+        <p class="muted">Not caught yet. ${regionBlurb(s.region)}.</p>${legend}`;
+    }
+    const level = levelFor(n);
+    const st = statsAtLevel(s, level);
+    return `<div class="dx-portrait"><img src="${thumb(id)}" alt="" /></div>
+      <div class="dx-name"><h3>${esc(s.name)}</h3><span class="muted">${dexNo(id)}</span><span class="tag pink">Lv ${level}</span></div>
+      <div class="dx-tags"><span class="tag ${rarityClass(s.rarity)}">${rarityLabel(s.rarity)}</span><span class="tag">${REGION_LABEL[s.region]}</span>${elementChip(s.element)}${n > 1 ? `<span class="tag">×${n} owned</span>` : ''}</div>
+      <div class="dx-stats">
+        ${statBar('HP', st.hp, STAT_MAX.hp * 1.4, 'hp')}
+        ${statBar('ATK', st.atk, STAT_MAX.atk * 1.4, 'atk')}
+        ${statBar('DEF', st.def, STAT_MAX.def * 1.4, 'def')}
+        ${statBar('SPD', st.spd, STAT_MAX.spd * 1.4, 'spd')}
+      </div>
+      <div class="dx-sub">Weak to</div>
+      <div class="dx-chips">${weaknessesOf(s).map((e) => elementChip(e)).join('') || '<span class="muted">Nothing!</span>'}</div>
+      <div class="dx-sub">Moves</div>
+      <div class="dx-moves">${movesFor(s)
+        .map((m) => `<span class="move-chip el-${m.element}">${ELEMENT_ICON[m.element]} ${esc(m.name)} <small>${m.power}</small></span>`)
+        .join('')}</div>${legend}`;
+  };
+
   const render = () => {
     const list = SPECIES.filter((s) => s.region === region);
-    const got = list.filter((s) => owned.has(s.id)).length;
-    const total = SPECIES.filter((s) => owned.has(s.id)).length;
     body.innerHTML = `
-      <h2>📖 Dex</h2>
-      <p>${me ? `You've caught <b>${total}/${SPECIES.length}</b> species. Complete every page first to win the mystery Master card.` : 'Enter the game to start your dex.'}</p>
-      <div class="tabs">${REGIONS.map((r) => {
-        const n = SPECIES.filter((s) => s.region === r);
-        return `<button type="button" data-region="${r}" class="${r === region ? 'active' : ''}">${REGION_LABEL[r]} ${n.filter((s) => owned.has(s.id)).length}/${n.length}</button>`;
-      }).join('')}</div>
-      <p class="tiny">${regionBlurb(region)} · ${got}/${list.length} caught</p>
-      <div class="dex-grid">${list
-        .map((s) => {
-          const n = owned.get(s.id) ?? 0;
-          return `<div class="dex-cell ${n ? '' : 'missing'} ${s.rarity === 'legendary' ? 'legendary' : ''}">
-            <img src="${thumb(s.id)}" alt="" loading="lazy" />
-            <span>${n ? esc(s.name) : '???'}</span>
-            <small>#${String(s.id).padStart(3, '0')} · ${s.rarity}${n > 1 ? ` · ×${n}` : ''}</small>
-          </div>`;
-        })
-        .join('')}</div>`;
+      <div class="dex">
+        <h2>📖 My dex</h2>
+        ${me ? '' : '<p class="muted">Enter the game and catch critters with pink orbs to start your dex.</p>'}
+        <div class="dx-top">
+          <section class="dx-card dx-master">
+            <div class="dx-master-head"><span class="dx-icon">💎</span><div><b>Master card</b><small>First trainer to fill every page wins it</small></div><span class="tag gold">🔒 Secret</span></div>
+            <div class="dx-master-count"><b>${speciesCaught}</b>/${SPECIES.length}</div>
+            <div class="bar dx-bar"><i style="width:${(speciesCaught / SPECIES.length) * 100}%"></i></div>
+            <div class="dx-regions">${REGIONS.map((r) => `<span class="tag">${REGION_LABEL[r]} <b>${caughtIn(r)}/${totalIn(r)}</b></span>`).join('')}</div>
+          </section>
+          <section class="dx-card dx-progress">
+            <div class="dx-progress-head"><b>${baseCaught}/${baseTotal}</b> species caught</div>
+            <div class="bar dx-bar"><i style="width:${(baseCaught / baseTotal) * 100}%"></i></div>
+            <p class="tiny muted">Island dex. Ocean, Sky and Cave are bonus pages.</p>
+          </section>
+          <section class="dx-card dx-count"><b>${copies}</b><span>critters caught</span></section>
+        </div>
+        <div class="dx-main">
+          <section class="dx-card dx-detail" id="dx-detail">${detail(selected)}</section>
+          <section class="dx-browse">
+            <div class="dx-tabs">${REGIONS.map(
+              (r) => `<button type="button" data-region="${r}" class="${r === region ? 'active' : ''}">${REGION_LABEL[r]} <small>${caughtIn(r)}/${totalIn(r)}</small></button>`,
+            ).join('')}</div>
+            <p class="tiny muted">${regionBlurb(region)}</p>
+            <div class="dx-grid">${list
+              .map((s) => {
+                const n = owned.get(s.id) ?? 0;
+                const legend = s.rarity === 'legendary';
+                return `<button type="button" class="dx-slot ${n ? 'caught' : 'missing'} ${legend ? 'legendary' : ''} ${s.id === selected ? 'selected' : ''}" data-species="${s.id}">
+                  <span class="dx-no">${dexNo(s.id)}</span>
+                  <img src="${thumb(s.id, { silhouette: !n })}" alt="" loading="lazy" />
+                  <span class="dx-slot-name">${n ? esc(s.name) : '???'}</span>
+                  <span class="tag ${rarityClass(s.rarity)}">${rarityLabel(s.rarity)}</span>
+                  ${legend ? '<small class="dx-legend">only during legendary events</small>' : ''}
+                </button>`;
+              })
+              .join('')}</div>
+          </section>
+        </div>
+      </div>`;
     $$('[data-region]', body).forEach((b) =>
       b.addEventListener('click', () => {
         region = b.dataset.region as Region;
+        selected = firstIn(region);
         render();
+      }),
+    );
+    $$('[data-species]', body).forEach((b) =>
+      b.addEventListener('click', () => {
+        selected = Number(b.dataset.species);
+        $$('.dx-slot', body).forEach((el) => el.classList.toggle('selected', el === b));
+        $('#dx-detail', body).innerHTML = detail(selected);
       }),
     );
   };
   render();
+}
+
+function rarityClass(r: Rarity): string {
+  return { common: '', uncommon: 'green', rare: 'blue', epic: 'purple', legendary: 'gold' }[r];
 }
 
 function regionBlurb(r: Region): string {
@@ -94,60 +202,165 @@ export async function openRanks(onClose?: AfterClose): Promise<void> {
 // ── Arena ────────────────────────────────────────────────────────────
 
 export async function openArena(onClose?: AfterClose): Promise<void> {
-  const body = openModal('<h2>⚔️ Arena</h2><p>Loading…</p>', onClose);
+  const body = openModal('<h2>⚔️ Arena</h2><p>Loading…</p>', onClose, { wide: true });
   const me = await loadMe();
   if (!me || !me.collection.length) {
-    body.innerHTML = `<h2>⚔️ Arena</h2><p>Catch a few critters with pink orbs first, then bring up to three of them here for quick duels against wandering trainers. Wins climb the Ranks board.</p>`;
+    body.innerHTML = `<div class="arena"><h2>⚔️ Arena</h2>
+      <div class="dx-card arena-empty"><span class="dx-icon">🎯</span><p>Catch a few critters with free pink orbs first, then bring up to three of them here for turn-based battles against wandering trainers. Wins climb the Ranks board.</p></div></div>`;
     return;
   }
-  const picked = new Set<number>();
-  const unique = dedupeBySpecies(me.collection);
-  const render = () => {
-    body.innerHTML = `<h2>⚔️ Arena</h2>
-      <p>Pick up to 3 critters. Elements matter: leaf › tide › ember › leaf, spark › breeze › stone › spark.</p>
-      <div class="dex-grid">${unique
+  const copies = new Map<number, number>();
+  for (const c of me.collection) copies.set(c.species, (copies.get(c.species) ?? 0) + 1);
+  const team = dedupeBySpecies(me.collection);
+  const picked: number[] = [];
+
+  const picker = (err = '') => {
+    body.innerHTML = `<div class="arena">
+      <h2>⚔️ Arena</h2>
+      <p class="muted">Pick up to 3 critters, then choose a move each turn. Elements matter: leaf › tide › ember › leaf, spark › breeze › stone › spark.</p>
+      <div class="ar-pick">${team
         .map((c) => {
           const s = speciesById(c.species);
-          return `<button type="button" class="dex-cell ${picked.has(c.id) ? 'picked' : ''}" data-id="${c.id}">
-            <img src="${thumb(s.id)}" alt="" /><span>${esc(s.name)}</span><small>${s.element}</small></button>`;
+          const order = picked.indexOf(c.id);
+          return `<button type="button" class="ar-pick-cell ${order >= 0 ? 'picked' : ''}" data-id="${c.id}">
+            ${order >= 0 ? `<span class="ar-order">${order + 1}</span>` : ''}
+            <img src="${thumb(s.id)}" alt="" /><b>${esc(s.name)}</b>
+            <span class="ar-pick-meta">Lv ${levelFor(copies.get(s.id) ?? 1)} ${elementChip(s.element)}</span></button>`;
         })
         .join('')}</div>
-      <div class="row" style="margin-top:14px"><button class="btn btn-primary" id="duel-go" type="button" ${picked.size ? '' : 'disabled'}>⚔️ Find a duel</button><span class="err"></span></div>
-      <div id="duel-out"></div>`;
+      <div class="row ar-go-row"><button class="btn btn-primary btn-lg" id="ar-go" type="button" ${picked.length ? '' : 'disabled'}>⚔️ Battle!</button>
+        <span class="tiny muted">${picked.length}/3 picked</span><span class="err">${esc(err)}</span></div>
+    </div>`;
     $$('[data-id]', body).forEach((b) =>
       b.addEventListener('click', () => {
         const id = Number(b.dataset.id);
-        if (picked.has(id)) picked.delete(id);
-        else if (picked.size < 3) picked.add(id);
-        render();
+        const i = picked.indexOf(id);
+        if (i >= 0) picked.splice(i, 1);
+        else if (picked.length < 3) picked.push(id);
+        picker();
       }),
     );
-    $('#duel-go', body).addEventListener('click', async () => {
+    $('#ar-go', body).addEventListener('click', async (e) => {
+      (e.currentTarget as HTMLButtonElement).disabled = true;
       try {
-        const r = await api.duel([...picked]);
-        const out = $('#duel-out', body);
-        out.innerHTML = `<div class="row" style="margin-top:12px">
-            <span>${r.you.map((id) => `<img src="${thumb(id)}" width="44" alt="${esc(speciesById(id).name)}" />`).join('')}</span>
-            <b>vs</b>
-            <span>${r.foe.map((id) => `<img src="${thumb(id)}" width="44" alt="${esc(speciesById(id).name)}" />`).join('')}</span>
-            <span class="tag">${esc(r.foeName)}</span>
-          </div><div class="duel-log" id="duel-log"></div>`;
-        const log = $('#duel-log', out);
-        r.log.forEach((line, i) =>
-          setTimeout(() => {
-            const p = document.createElement('p');
-            p.textContent = line;
-            if (i === r.log.length - 1) p.innerHTML = `<b class="${r.won ? 'ok' : ''}">${esc(line)}</b>`;
-            log.append(p);
-            log.scrollTop = log.scrollHeight;
-          }, i * 140),
-        );
-      } catch (e) {
-        errorBox(body, (e as Error).message);
+        const r = await api.arenaStart(picked);
+        battle(r.battleId, r.foeName, r.state);
+      } catch (err) {
+        picker((err as Error).message);
       }
     });
   };
-  render();
+
+  const fighterCard = (side: 'you' | 'foe', f: FighterView | null, teamList: BattleState['yourTeam'], trainer: string) => {
+    if (!f) return `<div class="ar-fighter ${side}"></div>`;
+    const pct = (f.hp / f.maxHp) * 100;
+    return `<div class="ar-fighter ${side}" data-species="${f.species}">
+      <img class="ar-portrait" src="${thumb(f.species)}" alt="" />
+      <div class="ar-info">
+        <div class="ar-name"><b>${esc(f.name)}</b><span class="tag pink">Lv ${f.level}</span></div>
+        <small class="muted">${esc(trainer)}</small>
+        <div class="ar-hp"><i class="${hpClass(pct)}" style="width:${pct}%"></i></div>
+        <div class="ar-hp-text"><span>HP</span><b>${f.hp}/${f.maxHp}</b></div>
+        <div class="ar-team">${teamList.map((t) => `<span class="ar-pip ${t.hp > 0 ? '' : 'out'}" title="${esc(speciesById(t.species).name)}"></span>`).join('')}</div>
+      </div>
+    </div>`;
+  };
+
+  const battle = (battleId: string, foeName: string, state: BattleState) => {
+    body.innerHTML = `<div class="arena">
+      <h2>⚔️ Arena <span class="tag">vs ${esc(foeName)}</span></h2>
+      <div class="ar-field">
+        <div id="ar-foe">${fighterCard('foe', state.foe, state.foeTeam, foeName)}</div>
+        <div class="ar-vs">VS</div>
+        <div id="ar-you">${fighterCard('you', state.you, state.yourTeam, 'You')}</div>
+      </div>
+      <div class="ar-bottom">
+        <div class="ar-moves" id="ar-moves"></div>
+        <div class="ar-log" id="ar-log"><p class="muted">${esc(foeName)} wants to battle! Pick a move.</p></div>
+      </div>
+      <div class="err" id="ar-err"></div>
+      <div id="ar-result"></div>
+    </div>`;
+    const log = $('#ar-log', body);
+    const movesBox = $('#ar-moves', body);
+    let busy = false;
+
+    const renderMoves = (s: BattleState) => {
+      movesBox.innerHTML = (s.you?.moves ?? [])
+        .map(
+          (m, i) =>
+            `<button type="button" class="move-chip big el-${m.element}" data-move="${i}"><span>${ELEMENT_ICON[m.element]} ${esc(m.name)}</span><small>PWR ${m.power} · ${Math.round(m.accuracy * 100)}%</small></button>`,
+        )
+        .join('');
+      $$('[data-move]', movesBox).forEach((b) => b.addEventListener('click', () => void play(Number(b.dataset.move))));
+    };
+
+    const update = (s: BattleState) => {
+      const sides = [
+        ['#ar-foe', s.foe, s.foeTeam, foeName, 'foe'],
+        ['#ar-you', s.you, s.yourTeam, 'You', 'you'],
+      ] as const;
+      for (const [slot, f, teamList, trainer, side] of sides) {
+        const box = $(slot, body);
+        const card = $('.ar-fighter', box);
+        if (!f || card?.dataset.species !== String(f.species)) {
+          box.innerHTML = fighterCard(side, f, teamList, trainer);
+          continue;
+        }
+        const pct = (f.hp / f.maxHp) * 100;
+        const bar = $('.ar-hp i', card);
+        bar.style.width = `${pct}%`;
+        bar.className = hpClass(pct);
+        $('.ar-hp-text b', card).textContent = `${f.hp}/${f.maxHp}`;
+        $$('.ar-pip', card).forEach((p, i) => p.classList.toggle('out', teamList[i].hp <= 0));
+      }
+    };
+
+    const addLine = (text: string, cls = '') => {
+      const p = document.createElement('p');
+      p.textContent = text;
+      if (cls) p.className = cls;
+      log.append(p);
+      log.scrollTop = log.scrollHeight;
+    };
+
+    const play = async (move: number) => {
+      if (busy) return;
+      busy = true;
+      movesBox.classList.add('busy');
+      $('#ar-err', body).textContent = '';
+      try {
+        const r = await api.arenaMove(battleId, move);
+        addLine(`Turn ${r.state.turn}`, 'turn');
+        for (const line of r.log) {
+          addLine(line, /fainted|missed/.test(line) ? 'warn' : /Super effective|Critical/.test(line) ? 'hot' : '');
+          await new Promise((res) => setTimeout(res, 320));
+        }
+        update(r.state);
+        if (r.done) {
+          movesBox.innerHTML = '';
+          $('#ar-result', body).innerHTML = `<div class="ar-result ${r.won ? 'won' : 'lost'}">
+            <span class="dx-icon">${r.won ? '🏆' : '💫'}</span>
+            <div><h3>${r.won ? 'Victory!' : 'Defeated'}</h3><p>+${r.points ?? 0} arena points${r.won ? '. Nice battling!' : '. Train up and try again.'}</p></div>
+            <button class="btn btn-primary" type="button" id="ar-again">Battle again</button></div>`;
+          $('#ar-again', body).addEventListener('click', () => picker());
+        } else renderMoves(r.state);
+      } catch (err) {
+        $('#ar-err', body).textContent = (err as Error).message;
+      } finally {
+        busy = false;
+        movesBox.classList.remove('busy');
+      }
+    };
+
+    renderMoves(state);
+  };
+
+  picker();
+}
+
+function hpClass(pct: number): string {
+  return pct > 50 ? 'hi' : pct > 20 ? 'mid' : 'lo';
 }
 
 function dedupeBySpecies(items: CollectionItem[]): CollectionItem[] {

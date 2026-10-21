@@ -73,9 +73,10 @@ class Client {
   send(m: unknown) {
     this.ws.send(JSON.stringify(m));
   }
-  async waitFor<K extends ServerMsg['t']>(t: K, pred: (m: Extract<ServerMsg, { t: K }>) => boolean = () => true, ms = 5000) {
+  /** Resolves with the first matching message at index >= `from` (defaults to the whole history). */
+  async waitFor<K extends ServerMsg['t']>(t: K, pred: (m: Extract<ServerMsg, { t: K }>) => boolean = () => true, ms = 5000, from = 0) {
     const start = Date.now();
-    let seen = 0;
+    let seen = from;
     while (Date.now() - start < ms) {
       for (; seen < this.msgs.length; seen++) {
         const m = this.msgs[seen];
@@ -197,8 +198,12 @@ try {
   for (let i = 0; i < 25 && !catchMsg; i++) {
     if (!a.critters.has(target.id)) break;
     await a.walkTo(() => critterPose(target, a.now()), 5);
+    const mark = a.msgs.length;
     a.throwAt('orb', (ms) => critterCenter(critterPose(target, ms), size));
-    catchMsg = await a.waitFor('catch', (m) => m.spawnId === target.id && m.ok, 900);
+    // A hit starts the wobble; the result arrives once it's over.
+    if (!(await a.waitFor('catchStart', (m) => m.spawnId === target.id, 900, mark))) continue;
+    const result = await a.waitFor('catch', (m) => m.spawnId === target.id, 4000, mark);
+    if (result?.ok) catchMsg = result;
   }
   assert.ok(catchMsg, 'should catch a critter within 25 throws');
   ok(`pink orb caught ${speciesById(catchMsg!.species).name}; dex updated`);
@@ -264,11 +269,32 @@ try {
   assert.equal((db.prepare('SELECT owner_id FROM critters WHERE id = ?').get(bDup) as { owner_id: string }).owner_id, alice.id);
   ok('market: locked first catch cannot be listed, swap settles instantly');
 
-  // Arena duel.
-  const duel = await http('POST', '/api/arena/duel', { token: tokA, critters: [bDup] });
-  assert.equal(duel.status, 200, JSON.stringify(duel.json));
-  assert.ok(duel.json.log.length > 2);
-  ok(`arena duel resolved (${duel.json.won ? 'won' : 'lost'}, ${duel.json.log.length} log lines)`);
+  // Arena: turn-based battle, server-authoritative.
+  assert.equal((await http('POST', '/api/arena/start', { token: tokA, critters: [aDup] })).status, 400); // no longer Alice's
+  const start = await http('POST', '/api/arena/start', { token: tokA, critters: [bDup] });
+  assert.equal(start.status, 200, JSON.stringify(start.json));
+  assert.equal(start.json.state.you.moves.length, 4);
+  assert.equal((await http('POST', '/api/arena/move', { token: tokA, battleId: start.json.battleId, move: 7 })).status, 400);
+  let turn: any = null;
+  let lines = 0;
+  for (let i = 0; i < 70; i++) {
+    turn = await http('POST', '/api/arena/move', { token: tokA, battleId: start.json.battleId, move: 0 });
+    assert.equal(turn.status, 200, JSON.stringify(turn.json));
+    lines += turn.json.log.length;
+    if (turn.json.done) break;
+  }
+  assert.ok(turn.json.done, 'battle should finish');
+  assert.equal((await http('POST', '/api/arena/move', { token: tokA, battleId: start.json.battleId, move: 0 })).status, 404);
+  ok(`arena battle resolved (${turn.json.won ? 'won' : 'lost'} after ${turn.json.state.turn} turns, ${lines} log lines)`);
+
+  // Chat: broadcast to everyone, control characters stripped, flood-limited.
+  const chatMark = b.msgs.length;
+  a.send({ t: 'chat', text: '  hello\u0007   island  ' });
+  const line = await b.waitFor('chat', (m) => !m.line.system && m.line.name === 'Alice', 2000, chatMark);
+  assert.equal(line?.line.text, 'hello island');
+  a.send({ t: 'chat', text: 'spam' });
+  assert.equal(await b.waitFor('chat', (m) => m.line.text === 'spam', 600, chatMark), null);
+  ok('chat: broadcast, sanitised and rate-limited');
 
   db.close();
   a.ws.close();

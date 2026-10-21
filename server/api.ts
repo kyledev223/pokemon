@@ -61,6 +61,7 @@ export function registerApi(app: FastifyInstance, game: Game): void {
     launched: game.launched,
     launchAt: CONFIG.launchAt || null,
     tokenMint: CONFIG.tokenMint || null,
+    vaultWallet: game.chain.vaultWallet,
     explorerSuffix,
     economy: game.economy(),
     card: game.card ? game.publicCard(game.card) : null,
@@ -187,9 +188,14 @@ export function registerApi(app: FastifyInstance, game: Game): void {
     return { ok: true };
   });
 
-  app.post('/api/arena/duel', async (req) => {
+  app.post('/api/arena/start', async (req) => {
     const b = (req.body ?? {}) as Body;
-    return arena.duel(playerFrom(b.token), Array.isArray(b.critters) ? b.critters : []);
+    return arena.start(playerFrom(b.token), Array.isArray(b.critters) ? b.critters : []);
+  });
+
+  app.post('/api/arena/move', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    return arena.move(playerFrom(b.token), b.battleId, b.move);
   });
 
   // ── Admin ─────────────────────────────────────────────────────────────

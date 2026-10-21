@@ -15,9 +15,9 @@ export function rollMessage(cardId: string, i: number): string {
   return `${cardId}:${i}`;
 }
 
-/** First 52 bits of the HMAC digest as a float in [0,1). Exact in IEEE-754 doubles. */
+/** The whole 256-bit HMAC digest read as an integer, divided by 2^256 → float in [0,1). */
 export function rollFromHex(hex: string): number {
-  return parseInt(hex.slice(0, 13), 16) / 2 ** 52;
+  return Number(BigInt(`0x${hex}`)) / 2 ** 256;
 }
 
 /** Mean number of hits until a catch, given the odds ramp above. */

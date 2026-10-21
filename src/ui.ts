@@ -46,9 +46,10 @@ export function accountLink(addr: string): string {
 type CloseFn = () => void;
 let onCloseCb: CloseFn | null = null;
 
-export function openModal(html: string, onClose?: CloseFn): HTMLElement {
+export function openModal(html: string, onClose?: CloseFn, opts: { wide?: boolean } = {}): HTMLElement {
   const dlg = $<HTMLDialogElement>('#modal');
   const body = $('#modal-body');
+  dlg.classList.toggle('wide', !!opts.wide);
   body.innerHTML = html;
   onCloseCb = onClose ?? null;
   if (document.pointerLockElement) document.exitPointerLock();

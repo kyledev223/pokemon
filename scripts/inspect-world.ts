@@ -1,5 +1,5 @@
 // Prints a coarse ASCII map of the island and sanity-checks spawn helpers.
-import { terrainHeight, CAVE, BAZAAR, pathDistance, randomLandPoint, randomOceanPoint, randomCavePoint, inCaveDoor, cardPose, resolveMove } from '../shared/world';
+import { terrainHeight, CAVE, BAZAAR, ARENA, DEX_MASTER, inlandWater, pathDistance, randomLandPoint, randomOceanPoint, randomCavePoint, inCaveDoor, cardPose, resolveMove } from '../shared/world';
 const rows: string[] = [];
 for (let z = -120; z <= 120; z += 6) {
   let line = '';
@@ -9,6 +9,9 @@ for (let z = -120; z <= 120; z += 6) {
     if (dc < CAVE.r) line += inCaveDoor(x, z) ? 'D' : 'c';
     else if (dc < CAVE.outer) line += inCaveDoor(x, z) ? 'D' : 'M';
     else if (Math.hypot(x - BAZAAR.x, z - BAZAAR.z) < BAZAAR.r) line += 'B';
+    else if (Math.hypot(x - ARENA.x, z - ARENA.z) < ARENA.r) line += 'A';
+    else if (Math.hypot(x - DEX_MASTER.x, z - DEX_MASTER.z) < DEX_MASTER.r) line += 'X';
+    else if (inlandWater(x, z) > 0.5 && h < 0) line += 'w';
     else if (h < -1.4) line += ' ';
     else if (h < 0) line += '~';
     else if (h < 1) line += '.';

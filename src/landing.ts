@@ -4,7 +4,7 @@ import type { Economy } from '../shared/protocol';
 import { api, prefGet, type Status } from './api';
 import { $, $$, accountLink, countdown, esc, setExplorerSuffix, shortSig, txLink, usd } from './ui';
 
-// Static-ish landing sections: brand, CA, early tiles, stats, cards gallery.
+// Landing sections around the hero: brand, CA, vault, callouts, cards gallery.
 
 export let status: Status | null = null;
 let launchAt: number | null = null;
@@ -15,7 +15,6 @@ export function applyBrand(): void {
   $$('[data-tagline]').forEach((el) => (el.textContent = BRAND.tagline));
   document.title = `${BRAND.name} · catch real cards on a shared island`;
   $<HTMLAnchorElement>('#social-x').href = BRAND.socials.x;
-  $<HTMLAnchorElement>('#social-tg').href = BRAND.socials.telegram;
   $<HTMLAnchorElement>('#buy-btn').href = BRAND.buyUrl;
 
   const toggle = $('#nav-toggle');
@@ -35,39 +34,46 @@ export async function refreshStatus(): Promise<Status | null> {
   }
   setExplorerSuffix(status.explorerSuffix);
   launchAt = status.launchAt ? Date.parse(status.launchAt) : null;
-  $('#early-total').textContent = status.waitlistTotal.toLocaleString();
+  $('#how-waitlist').textContent = status.waitlistTotal.toLocaleString();
   $('#how-hits').textContent = `~${Math.round(status.odds.expectedHits)}`;
-  $$('.js-threshold').forEach((el) => (el.textContent = usd(status!.economy.threshold).replace('.00', '')));
+  $$('.js-threshold').forEach((el) => (el.textContent = money(status!.economy.threshold)));
   applyEconomy(status.economy);
   applyToken(status.tokenMint);
-  if (launchAt) $('#early-launch-note').textContent = new Date(launchAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  applyVault(status.vaultWallet);
   return status;
 }
 
+/** "$10" for whole dollars, "$7.50" otherwise. */
+export const money = (n: number) => (Number.isInteger(n) ? `$${n}` : usd(n));
+
 export function applyEconomy(e: Economy): void {
   $('#how-caught').textContent = String(e.cardsCaught);
-  $('#hero-status').textContent = e.launched ? 'Live now: the island is open' : 'Pre-launch lobby is open';
-  if (e.launched) {
-    $('#early-countdown').textContent = 'Live!';
-    $('#early-launch-note').textContent = 'Bonuses are landing in bags';
-  }
+  const balls = `${e.balls} golden ball${e.balls === 1 ? '' : 's'} on the island`;
+  $('#hero-status').textContent = e.launched
+    ? `${balls} · vault ${usd(e.vaultUsd)} / next card at ${money(e.threshold)}`
+    : `Pre-launch · vault ${usd(e.vaultUsd)} / next card at ${money(e.threshold)}`;
+  if (e.launched) $('#early-countdown').textContent = 'Live';
 }
 
 function applyToken(mint: string | null): void {
   const pill = $<HTMLButtonElement>('#ca-pill');
-  const addr = $('#token-address');
-  const copy = $<HTMLButtonElement>('#token-copy');
-  const scan = $<HTMLAnchorElement>('#token-solscan');
   if (!mint) return;
-  pill.textContent = `CA ${shortSig(mint)} ⧉`;
-  pill.classList.add('live');
-  pill.onclick = () => copyText(mint, pill);
-  addr.textContent = mint;
-  copy.disabled = false;
-  copy.onclick = () => copyText(mint, copy);
-  scan.href = accountLink(mint).replace('/account/', '/token/');
-  scan.removeAttribute('aria-disabled');
+  $('#ca-addr').textContent = shortSig(mint);
+  pill.title = `Copy ${mint}`;
+  pill.onclick = () => copyText(mint, $('#ca-addr'));
   $<HTMLAnchorElement>('#buy-btn').href = `https://jup.ag/swap/SOL-${mint}`;
+}
+
+function applyVault(addr: string | null): void {
+  if (!addr) return;
+  $('#vault-address').textContent = addr;
+  const copy = $<HTMLButtonElement>('#vault-copy');
+  copy.disabled = false;
+  copy.onclick = () => copyText(addr, copy);
+  const link = $<HTMLAnchorElement>('#vault-explorer');
+  if (addr.startsWith('Mock')) return; // offline mock: nothing to look at
+  link.href = accountLink(addr);
+  link.removeAttribute('aria-disabled');
 }
 
 function copyText(text: string, el: HTMLElement): void {
@@ -80,13 +86,14 @@ function copyText(text: string, el: HTMLElement): void {
 
 export function tickCountdown(): void {
   if (status?.economy.launched) return;
-  $('#early-countdown').textContent = launchAt ? countdown(launchAt - Date.now()) : 'Soon';
+  $('#early-countdown').textContent = launchAt ? `Launch in ${countdown(launchAt - Date.now())}` : 'Launching soon';
 }
 
 export function setMySpot(position: number | null): void {
   if (!position) return;
-  $('#early-spot').textContent = `#${position.toLocaleString()}`;
-  $('#early-bonus').textContent = `${bonusForPosition(position)} bonus golden balls at launch`;
+  const el = $('#early-spot');
+  el.hidden = false;
+  el.textContent = `Your spot #${position.toLocaleString()} · ${bonusForPosition(position)} bonus balls`;
 }
 
 export async function loadMySpot(): Promise<void> {
@@ -110,7 +117,7 @@ export async function renderCards(): Promise<void> {
   if (!cards.length) return;
   grid.innerHTML = cards
     .map(
-      (c) => `<article class="slab">
+      (c) => `<article class="card slab">
         <img src="${esc(c.image)}" alt="${esc(c.name)}" loading="lazy" />
         <h3>${esc(c.name)}</h3>
         <div class="meta"><span class="tag gold">${esc(c.grade)}</span><span class="tag">${usd(c.valueUsd)}</span><span class="tag pink">${c.throws} hits</span></div>

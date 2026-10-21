@@ -13,6 +13,8 @@ export function mockSig(): string {
 /** Offline chain: fees appear out of thin air, every tx "succeeds" with a mock signature. */
 export class MockChain implements ChainProvider {
   readonly name = 'mock';
+  /** Fixed, obviously fake address so the vault card has something to show offline. */
+  readonly vaultWallet = 'MockVau1t1111111111111111111111111111111111';
 
   async claimCreatorFees(): Promise<FeeClaim> {
     const usd = Math.round((1.2 + Math.random() * 4.5) * 100) / 100;

@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { speciesById } from '../../shared/species';
 import { hashString } from '../../shared/noise';
 import {
+  ARENA,
   BALL_GRAVITY,
   BAZAAR,
   CAVE,
   CARD_HIT_RADIUS,
   CARD_SCALE,
+  DEX_MASTER,
   EYE_HEIGHT,
   JUMP_SPEED,
   LOBBY,
@@ -29,12 +31,17 @@ import {
   type SpawnInfo,
   type Vec3,
 } from '../../shared/world';
-import type { Ball, Economy, EventInfo, PublicCard, ServerMsg, ThrowKind, YouInfo } from '../../shared/protocol';
-import { buildIsland, makeLabel, type Island } from './world3d';
+import type { Ball, ChatLine, Economy, EventInfo, PublicCard, ServerMsg, ThrowKind, YouInfo } from '../../shared/protocol';
+import { buildIsland, makeNameTag, type Island } from './world3d';
 import { animateCritter, buildCritter, type CritterRig } from './critterMesh';
+import { BEAM_GEO, BEAM_MAT, GOLD_MAT, makeGoldBall, makePinkOrb, sparkleTexture } from './orbs';
+import { Hand } from './hand';
 import { Input } from './input';
 import { Net } from './net';
 import { Sfx } from './audio';
+
+/** Places you can press E at. */
+export type Spot = 'market' | 'arena' | 'dex';
 
 export interface GameHooks {
   onEconomy(e: Economy): void;
@@ -45,13 +52,18 @@ export interface GameHooks {
   onEvent(e: EventInfo | null): void;
   onToast(text: string, tone: 'info' | 'gold' | 'pink' | 'warn'): void;
   onCardCaught(m: Extract<ServerMsg, { t: 'cardCaught' }>, mine: boolean): void;
+  onChat(line: ChatLine): void;
+  onChatReset(lines: ChatLine[]): void;
   onPause(paused: boolean): void;
   onKey(code: string): void;
-  onNearBazaar(near: boolean): void;
+  onSpot(spot: Spot | null): void;
 }
 
 interface Remote {
   group: THREE.Group;
+  tag: THREE.Sprite;
+  name: string;
+  title: string | null;
   target: THREE.Vector3;
   ry: number;
 }
@@ -59,14 +71,25 @@ interface Remote {
 interface CritterView {
   info: SpawnInfo;
   rig: CritterRig;
+  tag: THREE.Sprite;
   size: number;
   phase: number;
-  wobbleUntil: number;
+  /** Set while the critter is inside a wobbling orb. */
+  caught: Capture | null;
   dying: number;
 }
 
+/** A pink orb sitting on the ground with a critter inside: 3 wobbles, then sparkle or burst. */
+interface Capture {
+  spawnId: string;
+  orb: THREE.Group;
+  start: number;
+  /** Wall-clock ms when the result arrived; the orb finishes its wobbles first. */
+  result: { ok: boolean; at: number } | null;
+}
+
 interface Projectile {
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   vel: THREE.Vector3;
   kind: ThrowKind;
   bounces: number;
@@ -79,14 +102,14 @@ interface Burst {
   points: THREE.Points;
   vel: Float32Array;
   age: number;
+  life: number;
 }
 
-const ORB_GEO = new THREE.IcosahedronGeometry(0.22, 1);
-const ORB_MAT = new THREE.MeshStandardMaterial({ color: '#ff3d8b', emissive: '#ff3d8b', emissiveIntensity: 0.35, flatShading: true });
-const GOLD_MAT = new THREE.MeshStandardMaterial({ color: '#ffc21a', emissive: '#ffb300', emissiveIntensity: 0.5, metalness: 0.5, roughness: 0.3, flatShading: true });
-const BALL_GEO = new THREE.IcosahedronGeometry(0.36, 1);
-const BEAM_GEO = new THREE.CylinderGeometry(0.08, 0.08, 7, 6, 1, true);
-const BEAM_MAT = new THREE.MeshBasicMaterial({ color: '#ffd34d', transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+const MAX_BALLS = 320;
+const WOBBLE_MS = 2600;
+const BALL_SIZE = 0.36;
+const ORB_SIZE = 0.2;
+const TAG_RANGE = 38;
 
 export class Game {
   readonly renderer: THREE.WebGLRenderer;
@@ -94,7 +117,8 @@ export class Game {
   readonly net = new Net();
   readonly sfx = new Sfx();
   readonly input: Input;
-  private island: Island;
+  readonly island: Island;
+  private hand = new Hand();
   private timer = new THREE.Timer();
 
   mode: Mode = 'lobby';
@@ -106,6 +130,7 @@ export class Game {
   private yaw = 0;
   private pitch = 0;
   private onGround = true;
+  private moving = 0;
 
   slot: 1 | 2 = 1;
   gold = 0;
@@ -114,16 +139,23 @@ export class Game {
   event: EventInfo | null = null;
 
   private remotes = new Map<string, Remote>();
-  private balls = new Map<string, THREE.Group>();
+  private balls = new Map<string, Ball & { phase: number }>();
+  private ballMesh: THREE.InstancedMesh;
+  private beamMesh: THREE.InstancedMesh;
   private critters = new Map<string, CritterView>();
+  private captures = new Map<string, Capture>();
   private card: { info: PublicCard; rig: CritterRig; holder: THREE.Group; plane: THREE.Mesh; light: THREE.PointLight } | null = null;
   private projectiles: Projectile[] = [];
   private bursts: Burst[] = [];
   private lastPosSent = 0;
   private lastThrow = 0;
   private pickupSent = new Map<string, number>();
-  private nearBazaar = false;
+  private spot: Spot | null = null;
   private textureLoader = new THREE.TextureLoader();
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private v3 = new THREE.Vector3();
+  private s3 = new THREE.Vector3();
 
   constructor(
     private shell: HTMLElement,
@@ -133,8 +165,20 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.autoClear = false;
     this.island = buildIsland();
     this.island.scene.add(this.camera);
+
+    const ballGeo = new THREE.IcosahedronGeometry(BALL_SIZE, 2);
+    this.ballMesh = new THREE.InstancedMesh(ballGeo, GOLD_MAT, MAX_BALLS);
+    this.beamMesh = new THREE.InstancedMesh(BEAM_GEO, BEAM_MAT, MAX_BALLS);
+    for (const m of [this.ballMesh, this.beamMesh]) {
+      m.count = 0;
+      m.frustumCulled = false;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.island.scene.add(m);
+    }
+
     this.input = new Input(canvas);
     this.input.onThrow = (k) => this.throwBall(k === 'gold' || this.slot === 2 ? 'gold' : 'orb');
     this.input.onWheel = () => this.setSlot(this.slot === 1 ? 2 : 1);
@@ -142,8 +186,9 @@ export class Game {
       if (code === 'Digit1') this.setSlot(1);
       else if (code === 'Digit2') this.setSlot(2);
       else if (code === 'KeyF') this.throwBall('gold');
-      else if (code === 'KeyE' && this.nearBazaar) hooks.onKey('market');
-      else hooks.onKey(code);
+      else if (code === 'KeyE') {
+        if (this.spot) hooks.onKey(`spot:${this.spot}`);
+      } else hooks.onKey(code);
     };
 
     document.addEventListener('pointerlockchange', () => {
@@ -173,18 +218,45 @@ export class Game {
     this.input.lock();
   }
 
+  /** Back to the landing page: the camera orbits again, you stay connected. */
+  leave(): void {
+    this.playing = false;
+    this.input.active = false;
+    this.input.keys.clear();
+    this.shell.classList.remove('playing');
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
   resume(): void {
     this.input.lock();
   }
 
   setSlot(s: 1 | 2): void {
     this.slot = s;
+    this.hand.setSlot(s);
     this.shell.querySelectorAll('.slot').forEach((el) => el.classList.toggle('active', (el as HTMLElement).dataset.slot === String(s)));
   }
 
-  /** Card hit preview so the HUD can show the odds of the next hit. */
+  sendChat(text: string): void {
+    this.net.send({ t: 'chat', text });
+  }
+
   get currentCard(): PublicCard | null {
     return this.card?.info ?? null;
+  }
+
+  // Minimap feeds.
+  mapMe() {
+    return this.spawned && this.mode === 'island' ? { x: this.pos.x, z: this.pos.z, yaw: this.yaw } : null;
+  }
+  mapBalls(): Iterable<{ x: number; z: number }> {
+    return this.balls.values();
+  }
+  mapOthers(): { x: number; z: number }[] {
+    return [...this.remotes.values()].map((r) => ({ x: r.target.x, z: r.target.z }));
+  }
+  mapCard(): { x: number; z: number } | null {
+    return this.card ? { x: this.card.holder.position.x, z: this.card.holder.position.z } : null;
   }
 
   // ── Network ─────────────────────────────────────────────────────────
@@ -193,13 +265,14 @@ export class Game {
     switch (m.t) {
       case 'init':
         for (const id of [...this.critters.keys()]) this.removeCritter(id, false);
-        for (const id of [...this.balls.keys()]) this.removeBall(id);
+        this.balls.clear();
         m.critters.forEach((s) => this.addCritter(s));
         m.balls.forEach((b) => this.addBall(b));
         this.setCard(m.card);
         this.setEconomy(m.economy);
         this.event = m.event;
         this.hooks.onEvent(m.event);
+        this.hooks.onChatReset(m.chat);
         break;
       case 'you': {
         this.you = m.you;
@@ -210,9 +283,10 @@ export class Game {
           this.pos.set(m.spawn.x, m.spawn.y, m.spawn.z);
           this.velY = 0;
           this.yaw = m.mode === 'lobby' ? 0 : Math.atan2(-CAVE.x, -CAVE.z); // face the crystal mountain
+          this.pitch = 0;
           this.spawned = true;
         }
-        this.island.lobby.visible = this.mode === 'lobby' || !this.economy?.launched;
+        this.syncLobby();
         this.hooks.onYou(m.you);
         this.hooks.onGold(this.gold);
         this.hooks.onDex(m.you.dex);
@@ -225,10 +299,10 @@ export class Game {
           seen.add(p.id);
           let r = this.remotes.get(p.id);
           if (!r) {
-            r = this.makeRemote(p.id, p.name);
+            r = this.makeRemote(p.id, p.name, p.title);
             r.group.position.set(p.x, p.y, p.z);
             this.remotes.set(p.id, r);
-          }
+          } else if (r.name !== p.name || r.title !== p.title) this.retag(p.id, r, p.name, p.title);
           r.target.set(p.x, p.y, p.z);
           r.ry = p.ry;
         }
@@ -253,15 +327,19 @@ export class Game {
         if (this.pickupSent.has(m.id)) {
           this.sfx.pickup();
           const b = this.balls.get(m.id);
-          if (b) this.burst(b.position, '#ffd34d');
+          if (b) this.burst(new THREE.Vector3(b.x, b.y, b.z), '#ffd23f');
         }
-        this.removeBall(m.id);
+        this.balls.delete(m.id);
+        this.pickupSent.delete(m.id);
         break;
       case 'critter+':
         m.spawns.forEach((s) => this.addCritter(s));
         break;
       case 'critter-':
         this.removeCritter(m.id, true);
+        break;
+      case 'catchStart':
+        this.startCapture(m.spawnId, m.at);
         break;
       case 'catch':
         this.onCatch(m);
@@ -274,7 +352,7 @@ export class Game {
           this.card.info.throws = m.index + 1;
           this.card.info.nextOdds = Math.min(0.25, m.odds + 0.00012);
           this.hooks.onCard(this.card.info);
-          this.burst(this.card.holder.position.clone().setY(this.card.holder.position.y + 1.5), '#ffd34d');
+          this.burst(this.card.holder.position.clone().setY(this.card.holder.position.y + 1.5), '#ffd23f');
         }
         if (m.byId === this.you?.id && !m.won) {
           this.sfx.cardHit();
@@ -283,7 +361,7 @@ export class Game {
         break;
       case 'cardCaught': {
         const mine = m.byId === this.you?.id;
-        if (this.card) this.burst(this.card.holder.position, '#ffd34d', 80);
+        if (this.card) this.burst(this.card.holder.position, '#ffd23f', 80);
         if (mine) this.sfx.fanfare();
         this.hooks.onCardCaught(m, mine);
         break;
@@ -305,6 +383,9 @@ export class Game {
       case 'toast':
         this.hooks.onToast(m.text, m.tone);
         break;
+      case 'chat':
+        this.hooks.onChat(m.line);
+        break;
       case 'correct':
         this.pos.set(m.x, m.y, m.z);
         this.velY = 0;
@@ -318,88 +399,151 @@ export class Game {
 
   private setEconomy(e: Economy): void {
     this.economy = e;
-    this.island.lobby.visible = !e.launched || this.mode === 'lobby';
+    this.syncLobby();
     this.hooks.onEconomy(e);
   }
 
+  /** The glass lobby is the pre-launch waiting room; after launch it only shows for anyone still up there. */
+  private syncLobby(): void {
+    this.island.lobby.visible = !this.economy?.launched || (this.spawned && this.mode === 'lobby');
+  }
+
+  // ── Catching ────────────────────────────────────────────────────────
+
+  private startCapture(spawnId: string, at: Vec3): void {
+    const v = this.critters.get(spawnId);
+    const orb = makePinkOrb(true);
+    orb.scale.setScalar(ORB_SIZE * 1.4);
+    const ground = Math.max(terrainHeight(at.x, at.z), WATER_Y);
+    orb.position.set(at.x, ground + ORB_SIZE * 1.4, at.z);
+    this.island.scene.add(orb);
+    const cap: Capture = { spawnId, orb, start: performance.now(), result: null };
+    this.captures.set(spawnId, cap);
+    if (v) v.caught = cap;
+    this.burst(orb.position, '#ff5ea8', 18);
+  }
+
   private onCatch(m: Extract<ServerMsg, { t: 'catch' }>): void {
-    const v = this.critters.get(m.spawnId);
     const mine = m.byId === this.you?.id;
     const sp = speciesById(m.species);
-    if (m.ok) {
-      if (v) this.burst(v.rig.group.position, '#ff3d8b', 40);
-      if (mine) {
+    const cap = this.captures.get(m.spawnId);
+    const announce = () => {
+      if (!mine) return;
+      if (m.ok) {
         this.sfx.caught();
         this.hooks.onToast(m.isNew ? `📖 New! You caught ${sp.name}.` : `You caught another ${sp.name}.`, 'pink');
-      }
-    } else {
-      if (v) v.wobbleUntil = performance.now() + 900;
-      if (mine) {
+      } else {
         this.sfx.escaped();
         this.hooks.onToast(`${sp.name} broke free!`, 'info');
+      }
+    };
+    if (cap) {
+      cap.result = { ok: m.ok, at: performance.now() };
+      // Let the third wobble finish before revealing the result.
+      setTimeout(announce, Math.max(0, cap.start + WOBBLE_MS - performance.now()));
+    } else announce();
+  }
+
+  private updateCaptures(now: number): void {
+    for (const [id, cap] of this.captures) {
+      const t = now - cap.start;
+      const v = this.critters.get(id);
+      // Critter shrinks into the orb over the first 300ms.
+      if (v) {
+        const k = Math.max(0, 1 - t / 300);
+        if (!cap.result || t < WOBBLE_MS) v.rig.group.scale.setScalar(v.size * k);
+        v.tag.visible = false;
+      }
+      // Three wobbles, each a short damped rock with a pause between.
+      const w = (t - 400) / 700;
+      const inWobble = w >= 0 && w < 3 && w % 1 < 0.6;
+      cap.orb.rotation.z = inWobble ? Math.sin(((w % 1) / 0.6) * Math.PI * 2) * 0.45 : 0;
+      cap.orb.position.y += 0;
+      if (cap.result && t >= WOBBLE_MS) {
+        if (cap.result.ok) this.sparkle(cap.orb.position);
+        else {
+          this.burst(cap.orb.position, '#ff5ea8', 26);
+          if (v) {
+            v.caught = null;
+            v.rig.group.scale.setScalar(v.size);
+          }
+        }
+        this.island.scene.remove(cap.orb);
+        this.captures.delete(id);
+      } else if (!cap.result && t > WOBBLE_MS + 5000) {
+        // Result never came (reconnect); give the critter back.
+        this.island.scene.remove(cap.orb);
+        this.captures.delete(id);
+        if (v) {
+          v.caught = null;
+          v.rig.group.scale.setScalar(v.size);
+        }
       }
     }
   }
 
   // ── Scene objects ───────────────────────────────────────────────────
 
-  private makeRemote(id: string, name: string): Remote {
+  private remoteColor(id: string): THREE.Color {
+    return new THREE.Color().setHSL((hashString(id) % 360) / 360, 0.75, 0.6);
+  }
+
+  private makeRemote(id: string, name: string, title: string | null): Remote {
     const g = new THREE.Group();
-    const hue = (hashString(id) % 360) / 360;
-    const color = new THREE.Color().setHSL(hue, 0.7, 0.62);
+    const color = this.remoteColor(id);
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.8, 3, 8), new THREE.MeshLambertMaterial({ color, flatShading: true }));
     body.position.y = 0.85;
     const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 1), new THREE.MeshLambertMaterial({ color: '#ffe3c4', flatShading: true }));
     head.position.y = 1.65;
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#ff3d8b' }));
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#ff5ea8' }));
     cap.position.y = 1.72;
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.3), new THREE.MeshLambertMaterial({ color: '#ff3d8b' }));
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.3), new THREE.MeshLambertMaterial({ color: '#ff5ea8' }));
     visor.position.set(0, 1.74, 0.36);
     for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 4), new THREE.MeshBasicMaterial({ color: '#1d1530' }));
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 4), new THREE.MeshBasicMaterial({ color: '#2a2140' }));
       eye.position.set(side * 0.13, 1.65, 0.32);
       g.add(eye);
     }
-    const label = makeLabel(name, { scale: 0.009 });
-    label.position.y = 2.5;
-    g.add(body, head, cap, visor, label);
+    const tag = makeNameTag(name, { title, dot: `#${color.getHexString()}` });
+    tag.position.y = 2.55;
+    g.add(body, head, cap, visor, tag);
     this.island.scene.add(g);
-    return { group: g, target: new THREE.Vector3(), ry: 0 };
+    return { group: g, tag, name, title, target: new THREE.Vector3(), ry: 0 };
+  }
+
+  private retag(id: string, r: Remote, name: string, title: string | null): void {
+    r.group.remove(r.tag);
+    (r.tag.material as THREE.SpriteMaterial).map?.dispose();
+    r.tag = makeNameTag(name, { title, dot: `#${this.remoteColor(id).getHexString()}` });
+    r.tag.position.y = 2.55;
+    r.group.add(r.tag);
+    r.name = name;
+    r.title = title;
   }
 
   private addBall(b: Ball): void {
-    if (this.balls.has(b.id)) return;
-    const g = new THREE.Group();
-    const ball = new THREE.Mesh(BALL_GEO, GOLD_MAT);
-    const beam = new THREE.Mesh(BEAM_GEO, BEAM_MAT);
-    beam.position.y = 3.5;
-    g.add(ball, beam);
-    g.position.set(b.x, b.y, b.z);
-    g.userData.phase = Math.random() * 6;
-    g.userData.baseY = b.y;
-    this.balls.set(b.id, g);
-    this.island.scene.add(g);
-  }
-
-  private removeBall(id: string): void {
-    const g = this.balls.get(id);
-    if (g) this.island.scene.remove(g);
-    this.balls.delete(id);
-    this.pickupSent.delete(id);
+    if (this.balls.has(b.id) || this.balls.size >= MAX_BALLS) return;
+    this.balls.set(b.id, { ...b, phase: Math.random() * 6 });
   }
 
   private addCritter(s: SpawnInfo): void {
     if (this.critters.has(s.id)) return;
     const sp = speciesById(s.species);
     const rig = buildCritter(sp);
+    const tag = makeNameTag(sp.name, { dot: sp.color, scale: 0.0075 });
+    tag.position.y = 1.5;
+    tag.visible = false;
+    // Tag lives on the group so it rides along, but is counter-scaled so every critter's tag is the same size.
+    tag.scale.multiplyScalar(1 / sp.size);
+    rig.group.add(tag);
     this.island.scene.add(rig.group);
-    this.critters.set(s.id, { info: s, rig, size: sp.size, phase: Math.random() * 6, wobbleUntil: 0, dying: 0 });
+    this.critters.set(s.id, { info: s, rig, tag, size: sp.size, phase: Math.random() * 6, caught: null, dying: 0 });
   }
 
   private removeCritter(id: string, animate: boolean): void {
     const v = this.critters.get(id);
     if (!v) return;
-    if (animate) {
+    if (animate && !v.caught) {
       v.dying = performance.now();
       return;
     }
@@ -422,10 +566,10 @@ export class Game {
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 2.38), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }));
       plane.position.y = CARD_SCALE * 1.35 + 1.5;
       holder.add(plane);
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 60, 8, 1, true), BEAM_MAT);
-      beam.position.y = 30;
+      const beam = new THREE.Mesh(BEAM_GEO, BEAM_MAT);
+      beam.scale.set(1.6, 2.2, 1.6);
       holder.add(beam);
-      const light = new THREE.PointLight('#ffd34d', 18, 14, 1.5);
+      const light = new THREE.PointLight('#ffd23f', 18, 14, 1.5);
       light.position.y = 3;
       holder.add(light);
       this.island.scene.add(holder);
@@ -447,12 +591,16 @@ export class Game {
       this.hooks.onGold(this.gold);
     }
     this.lastThrow = now;
+    if (kind === 'gold' && this.slot !== 2) this.setSlot(2);
+    this.hand.throw();
     const d = new THREE.Vector3();
     this.camera.getWorldDirection(d);
     d.y += 0.1;
     d.normalize();
-    const o = this.camera.getWorldPosition(new THREE.Vector3()).addScaledVector(d, 0.5);
-    o.y -= 0.15;
+    // Leaves from the hand's side of the screen.
+    const right = new THREE.Vector3().crossVectors(d, this.camera.up).normalize();
+    const o = this.camera.getWorldPosition(new THREE.Vector3()).addScaledVector(d, 0.5).addScaledVector(right, 0.25);
+    o.y -= 0.2;
     const ov = { x: o.x, y: o.y, z: o.z };
     const dv = { x: d.x, y: d.y, z: d.z };
     this.net.send({ t: 'throw', kind, o: ov, d: dv, at: this.net.now() });
@@ -462,7 +610,8 @@ export class Game {
 
   /** Visual projectile; predicts where it stops if it will hit a creature. */
   private spawnProjectile(kind: ThrowKind, o: Vec3, d: Vec3): void {
-    const mesh = new THREE.Mesh(ORB_GEO, kind === 'gold' ? GOLD_MAT : ORB_MAT);
+    const mesh = kind === 'gold' ? makeGoldBall() : makePinkOrb();
+    mesh.scale.setScalar(ORB_SIZE);
     mesh.position.set(o.x, o.y, o.z);
     this.island.scene.add(mesh);
     const at = this.net.now();
@@ -472,6 +621,7 @@ export class Game {
       stopAt = traceHit(o, d, (dt) => cardCenter(cardPose(c.seed, c.releasedAt, at + dt * 1000)), CARD_HIT_RADIUS);
     } else if (kind === 'orb' && this.economy?.launched) {
       for (const v of this.critters.values()) {
+        if (v.caught) continue;
         const p0 = critterPose(v.info, at);
         if (Math.hypot(p0.x - o.x, p0.z - o.z) > 90) continue;
         const t = traceHit(o, d, (dt) => critterCenter(critterPose(v.info, at + dt * 1000), v.size), critterHitRadius(v.size));
@@ -500,7 +650,7 @@ export class Game {
       p.age += dt;
       p.life -= dt;
       if (p.stopAt !== null && p.age >= p.stopAt) {
-        this.burst(p.mesh.position, p.kind === 'gold' ? '#ffd34d' : '#ff7ab6', 14);
+        this.burst(p.mesh.position, p.kind === 'gold' ? '#ffd23f' : '#ff7ab6', 14);
         p.life = 0;
       } else {
         p.vel.y += BALL_GRAVITY * dt;
@@ -511,8 +661,8 @@ export class Game {
         if (y < WATER_Y - 0.3 && g < WATER_Y) {
           this.burst(p.mesh.position, '#bff3ff', 10);
           p.life = 0;
-        } else if (y < g + 0.2) {
-          p.mesh.position.y = g + 0.2;
+        } else if (y < g + ORB_SIZE) {
+          p.mesh.position.y = g + ORB_SIZE;
           if (p.kind === 'gold' || p.bounces >= 3) p.life = Math.min(p.life, 0.6);
           p.vel.y = Math.abs(p.vel.y) * 0.45;
           p.vel.x *= 0.6;
@@ -527,7 +677,7 @@ export class Game {
     }
   }
 
-  private burst(at: THREE.Vector3, color: string, n = 24): void {
+  private burst(at: THREE.Vector3, color: string, n = 24, opts: { size?: number; star?: boolean; life?: number } = {}): void {
     const g = new THREE.BufferGeometry();
     const pos = new Float32Array(n * 3);
     const vel = new Float32Array(n * 3);
@@ -539,9 +689,23 @@ export class Game {
       vel.set([Math.cos(a) * Math.sqrt(1 - u * u) * s, Math.abs(u) * s + 2, Math.sin(a) * Math.sqrt(1 - u * u) * s], i * 3);
     }
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const points = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 0.35, transparent: true, depthWrite: false }));
+    const material = new THREE.PointsMaterial({
+      color,
+      size: opts.size ?? 0.5,
+      transparent: true,
+      depthWrite: false,
+      map: sparkleTexture(),
+      blending: opts.star ? THREE.AdditiveBlending : THREE.NormalBlending,
+    });
+    const points = new THREE.Points(g, material);
     this.island.scene.add(points);
-    this.bursts.push({ points, vel, age: 0 });
+    this.bursts.push({ points, vel, age: 0, life: opts.life ?? 1.1 });
+  }
+
+  /** Successful catch: a two-colour star shower. */
+  private sparkle(at: THREE.Vector3): void {
+    this.burst(at, '#ffd23f', 30, { size: 0.9, star: true, life: 1.4 });
+    this.burst(at, '#ff5ea8', 22, { size: 0.7, star: true, life: 1.2 });
   }
 
   private updateBursts(dt: number): void {
@@ -554,10 +718,11 @@ export class Game {
         attr.setXYZ(k, attr.getX(k) + b.vel[k * 3] * dt, attr.getY(k) + b.vel[k * 3 + 1] * dt, attr.getZ(k) + b.vel[k * 3 + 2] * dt);
       }
       attr.needsUpdate = true;
-      (b.points.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - b.age / 1.1);
-      if (b.age > 1.1) {
+      (b.points.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - b.age / b.life);
+      if (b.age > b.life) {
         this.island.scene.remove(b.points);
         b.points.geometry.dispose();
+        (b.points.material as THREE.Material).dispose();
         this.bursts.splice(i, 1);
       }
     }
@@ -571,6 +736,7 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
+    this.hand.resize(this.camera.aspect);
   }
 
   private frame(): void {
@@ -588,12 +754,15 @@ export class Game {
     }
 
     const wall = performance.now();
+    const eye = this.camera.position;
     for (const [id, v] of this.critters) {
       const p = critterPose(v.info, now);
-      v.rig.group.position.set(p.x, p.y, p.z);
-      v.rig.group.rotation.y = p.heading;
-      animateCritter(v.rig, t, v.phase, p.airborne);
-      if (wall < v.wobbleUntil) v.rig.body.rotation.z = Math.sin(wall * 0.04) * 0.4;
+      if (!v.caught) {
+        v.rig.group.position.set(p.x, p.y, p.z);
+        v.rig.group.rotation.y = p.heading;
+        animateCritter(v.rig, t, v.phase, p.airborne);
+        v.tag.visible = this.playing && Math.hypot(p.x - eye.x, p.z - eye.z) < TAG_RANGE;
+      }
       if (v.dying) {
         const k = 1 - (wall - v.dying) / 450;
         if (k <= 0) {
@@ -602,6 +771,7 @@ export class Game {
         } else v.rig.group.scale.setScalar(v.size * k);
       }
     }
+    this.updateCaptures(wall);
 
     if (this.card) {
       const c = this.card.info;
@@ -613,15 +783,38 @@ export class Game {
       this.card.plane.position.y = CARD_SCALE * 1.35 + 1.5 + Math.sin(t * 2) * 0.15;
     }
 
-    for (const b of this.balls.values()) {
-      b.children[0].position.y = Math.sin(t * 2 + b.userData.phase) * 0.15;
-      b.children[0].rotation.y = t * 2;
-    }
-
+    this.updateBalls(t);
     this.updateProjectiles(dt);
     this.updateBursts(dt);
     this.island.update(t);
+    BEAM_MAT.uniforms.time.value = t;
+
+    this.renderer.clear();
     this.renderer.render(this.island.scene, this.camera);
+    if (this.playing) {
+      this.hand.update(dt, this.moving, t);
+      this.hand.render(this.renderer);
+    }
+  }
+
+  private updateBalls(t: number): void {
+    const launched = !!this.economy?.launched;
+    let i = 0;
+    if (launched) {
+      for (const b of this.balls.values()) {
+        const bob = Math.sin(t * 2 + b.phase) * 0.15;
+        this.q.setFromAxisAngle(this.v3.set(0, 1, 0), t * 2 + b.phase);
+        this.m4.compose(this.v3.set(b.x, b.y + bob, b.z), this.q, this.s3.set(1, 1, 1));
+        this.ballMesh.setMatrixAt(i, this.m4);
+        this.m4.compose(this.v3.set(b.x, b.y - 0.3, b.z), this.q.identity(), this.s3.set(1, 1, 1));
+        this.beamMesh.setMatrixAt(i, this.m4);
+        i++;
+      }
+    }
+    this.ballMesh.count = i;
+    this.beamMesh.count = i;
+    this.ballMesh.instanceMatrix.needsUpdate = true;
+    this.beamMesh.instanceMatrix.needsUpdate = true;
   }
 
   private updateAttract(t: number): void {
@@ -636,6 +829,9 @@ export class Game {
   private updatePlayer(dt: number): void {
     const look = this.input.consumeLook();
     const sens = this.input.isTouch ? 0.0035 : 0.0022;
+    // Right stick turns at up to ~150°/s.
+    look.x += this.input.lookJoy.x * dt * 1200;
+    look.y += this.input.lookJoy.y * dt * 700;
     this.yaw -= look.x * sens;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - look.y * sens));
 
@@ -648,6 +844,7 @@ export class Game {
     const next = resolveMove(this.pos.x, this.pos.z, this.pos.x + dx, this.pos.z + dz, this.mode);
     this.pos.x = next.x;
     this.pos.z = next.z;
+    this.moving = this.onGround ? Math.min(1, Math.hypot(mv.x, mv.y)) * (mv.run ? 1.3 : 1) : 0;
 
     if (this.input.jump && this.onGround) {
       this.velY = JUMP_SPEED;
@@ -675,8 +872,8 @@ export class Game {
 
     if (this.mode === 'island' && this.economy?.launched) {
       for (const [id, b] of this.balls) {
-        if (Math.hypot(b.position.x - this.pos.x, b.position.z - this.pos.z) > PICKUP_RADIUS) continue;
-        if (Math.abs(b.userData.baseY - this.pos.y) > 2.5) continue;
+        if (Math.hypot(b.x - this.pos.x, b.z - this.pos.z) > PICKUP_RADIUS) continue;
+        if (Math.abs(b.y - this.pos.y) > 2.5) continue;
         const sent = this.pickupSent.get(id) ?? 0;
         if (now - sent > 1500) {
           this.pickupSent.set(id, now);
@@ -685,10 +882,12 @@ export class Game {
       }
     }
 
-    const near = this.mode === 'island' && Math.hypot(this.pos.x - BAZAAR.x, this.pos.z - BAZAAR.z) < BAZAAR.r + 1;
-    if (near !== this.nearBazaar) {
-      this.nearBazaar = near;
-      this.hooks.onNearBazaar(near);
+    const near = (p: { x: number; z: number }, r: number) => Math.hypot(this.pos.x - p.x, this.pos.z - p.z) < r;
+    const spot: Spot | null =
+      this.mode !== 'island' ? null : near(BAZAAR, BAZAAR.r + 1) ? 'market' : near(ARENA, ARENA.r) ? 'arena' : near(DEX_MASTER, DEX_MASTER.r + 3) ? 'dex' : null;
+    if (spot !== this.spot) {
+      this.spot = spot;
+      this.hooks.onSpot(spot);
     }
   }
 }

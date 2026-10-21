@@ -11,6 +11,8 @@ export interface FeeClaim {
  */
 export interface ChainProvider {
   readonly name: string;
+  /** Public address of the USDC card vault, shown on the landing page. */
+  readonly vaultWallet: string;
   /** Claim accrued creator fees into the fee wallet. Null when there was nothing to claim. */
   claimCreatorFees(): Promise<FeeClaim | null>;
   /** Convert `usd` worth of claimed SOL into USDC held by the vault wallet. */

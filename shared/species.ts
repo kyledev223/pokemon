@@ -124,8 +124,64 @@ export function statsFor(s: Species) {
   return {
     hp: Math.round((40 + s.size * 22) * tier),
     atk: Math.round((10 + (s.id % 7) * 1.5) * tier),
+    def: Math.round((8 + ((s.id * 3) % 8) * 1.2 + s.size * 4) * tier),
     spd: Math.round((8 + ((s.id * 5) % 9)) * tier * (1.6 - s.size * 0.35)),
   };
+}
+
+/** Rough upper bounds for drawing stat bars. */
+export const STAT_MAX = { hp: 140, atk: 34, def: 40, spd: 36 };
+
+export interface Move {
+  name: string;
+  element: Element | 'neutral';
+  power: number;
+  accuracy: number;
+}
+
+const MOVE_POOL: Record<Element, [string, number, number][]> = {
+  leaf: [['Petal Pelt', 40, 1], ['Vine Snap', 55, 0.95], ['Bloom Burst', 75, 0.85], ['Thorn Volley', 65, 0.9]],
+  ember: [['Ember Puff', 40, 1], ['Toast Slam', 55, 0.95], ['Cinder Swirl', 75, 0.85], ['Flare Hop', 65, 0.9]],
+  tide: [['Bubble Pop', 40, 1], ['Splash Dash', 55, 0.95], ['Riptide Roll', 75, 0.85], ['Foam Spray', 65, 0.9]],
+  spark: [['Static Nip', 40, 1], ['Zap Zip', 55, 0.95], ['Thunder Fizz', 75, 0.85], ['Glimmer Bolt', 65, 0.9]],
+  stone: [['Pebble Toss', 40, 1], ['Rock Bump', 55, 0.95], ['Boulder Drop', 75, 0.85], ['Crystal Crush', 65, 0.9]],
+  breeze: [['Gust Flick', 40, 1], ['Feather Swipe', 55, 0.95], ['Cyclone Spin', 75, 0.85], ['Draft Dive', 65, 0.9]],
+};
+const NEUTRAL_MOVES: [string, number, number][] = [['Bonk', 45, 1], ['Tumble', 50, 0.95], ['Cheeky Nibble', 40, 1], ['Wiggle Whack', 55, 0.9]];
+const ELEMENTS: Element[] = ['leaf', 'ember', 'tide', 'spark', 'stone', 'breeze'];
+
+/** Exactly 4 moves: three of the species' element, one neutral (or a coverage move for rare+). */
+export function movesFor(s: Species): Move[] {
+  const pool = MOVE_POOL[s.element];
+  const start = s.id % pool.length;
+  const own = [0, 1, 2].map((k) => pool[(start + k) % pool.length]);
+  const out: Move[] = own.map(([name, power, accuracy]) => ({ name, element: s.element, power, accuracy }));
+  if (s.rarity === 'rare' || s.rarity === 'epic' || s.rarity === 'legendary') {
+    const cover = ELEMENTS.find((e) => BEATS[e] === BEATS[BEATS[s.element]]) ?? ELEMENTS[(s.id * 7) % ELEMENTS.length];
+    const [name, power, accuracy] = MOVE_POOL[cover][(s.id + 1) % 4];
+    out.push({ name, element: cover, power, accuracy });
+  } else {
+    const [name, power, accuracy] = NEUTRAL_MOVES[s.id % NEUTRAL_MOVES.length];
+    out.push({ name, element: 'neutral', power, accuracy });
+  }
+  return out;
+}
+
+/** Elements that deal super-effective damage to this species. */
+export function weaknessesOf(s: Species): Element[] {
+  return ELEMENTS.filter((e) => BEATS[e] === s.element);
+}
+
+/** Level from how many copies you own: 5 for the first, +3 per extra copy, capped at 50. */
+export function levelFor(copies: number): number {
+  return Math.min(50, 5 + 3 * Math.max(0, copies - 1));
+}
+
+/** Stats scaled for a level (level 5 = base stats). */
+export function statsAtLevel(s: Species, level: number) {
+  const st = statsFor(s);
+  const k = 1 + (level - 5) * 0.03;
+  return { hp: Math.round(st.hp * k), atk: Math.round(st.atk * k), def: Math.round(st.def * k), spd: Math.round(st.spd * k) };
 }
 
 const BEATS: Record<Element, Element> = {
@@ -137,7 +193,8 @@ const BEATS: Record<Element, Element> = {
   stone: 'spark',
 };
 
-export function elementMultiplier(att: Element, def: Element): number {
+export function elementMultiplier(att: Element | 'neutral', def: Element): number {
+  if (att === 'neutral') return 1;
   if (BEATS[att] === def) return 1.5;
   if (BEATS[def] === att) return 0.7;
   return 1;

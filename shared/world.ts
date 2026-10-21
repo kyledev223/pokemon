@@ -28,6 +28,28 @@ export const CARD_HIT_RADIUS = 2.4;
 export const LOBBY = { x: 0, y: 58, z: 0, r: 11 };
 export const PLAZA = { x: 0, z: 0, r: 8 };
 export const BAZAAR = { x: -52, z: 48, r: 11 };
+/** Stadium on the west side. `r` is the outer wall radius; the pitch is flattened inside it. */
+export const ARENA = { x: -46, z: 4, r: 13 };
+/** Dex Master NPC pavilion just east of the spawn pad. */
+export const DEX_MASTER = { x: 18, z: 2, r: 4 };
+
+/** Shallow ponds (wadeable: the bed sits above the DEEP walking limit). */
+export const PONDS = [
+  { x: -26, z: -48, r: 7 },
+  { x: 38, z: 6, r: 6 },
+  { x: -14, z: 46, r: 6 },
+];
+/** A short river running from the mountain foot east into the sea. */
+export const RIVER: [number, number][] = [[72, -16], [79, -11], [88, -10], [96, -5], [108, 0]];
+export const RIVER_HALF_WIDTH = 2.4;
+const WATER_BED = -0.85;
+
+/** Low-frequency "flat" terrain level; landmarks are leveled to this at their center. */
+const flatLevel = (x: number, z: number) => 2.4 + fbm(x * 0.012, z * 0.012, 9, 2) * 3;
+/** Exact ground height of the spawn pad, arena pitch and Dex Master pavilion. */
+export const PLAZA_Y = flatLevel(PLAZA.x, PLAZA.z);
+export const ARENA_Y = flatLevel(ARENA.x, ARENA.z);
+export const DEX_MASTER_Y = flatLevel(DEX_MASTER.x, DEX_MASTER.z);
 /** Crystal mountain in the north-east. `r` is the cave's inner wall, `outer` the mountain foot. */
 export const CAVE = { x: 46, z: -44, r: 18, outer: 31, floorY: 3, doorHalf: 3.2, doorAngle: Math.atan2(44, -46) };
 
@@ -38,6 +60,7 @@ export const PATHS: [number, number][][] = [
   [[0, 0], [22, 18], [46, 40], [66, 58]], // SE beach
   [[0, 0], [10, 30], [4, 56], [-4, 82]], // south beach
   [[0, 0], [-6, -30], [2, -58], [-4, -84]], // north beach
+  [[0, 0], [-20, 2], [-33, 4]], // W → arena
 ];
 
 function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
@@ -58,6 +81,22 @@ export function pathDistance(x: number, z: number): number {
   return best;
 }
 
+export function riverDistance(x: number, z: number): number {
+  let best = Infinity;
+  for (let i = 0; i < RIVER.length - 1; i++) {
+    const d = segDist(x, z, RIVER[i][0], RIVER[i][1], RIVER[i + 1][0], RIVER[i + 1][1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** 0 on dry land, 1 in the middle of a pond or river. */
+export function inlandWater(x: number, z: number): number {
+  let k = ramp(riverDistance(x, z), RIVER_HALF_WIDTH + 2.2, RIVER_HALF_WIDTH * 0.5);
+  for (const p of PONDS) k = Math.max(k, ramp(Math.hypot(x - p.x, z - p.z), p.r + 2.5, p.r * 0.45));
+  return k;
+}
+
 export function coastRadius(angle: number): number {
   const n = fbm(Math.cos(angle) * 1.3 + 20, Math.sin(angle) * 1.3 + 20, 11, 3);
   return 90 + (n - 0.5) * 22;
@@ -68,19 +107,27 @@ export function terrainHeight(x: number, z: number): number {
   const t = d / coastRadius(Math.atan2(z, x));
 
   const rolling = 2.4 + fbm(x * 0.03 + 3, z * 0.03 + 7, 5, 4) * 7.5;
-  const flat = 2.4 + fbm(x * 0.012, z * 0.012, 9, 2) * 3;
+  const flat = flatLevel(x, z);
   const flatten = Math.max(
     ramp(pathDistance(x, z), 4.5, 1.8),
     ramp(Math.hypot(x - PLAZA.x, z - PLAZA.z), PLAZA.r + 5, PLAZA.r),
     ramp(Math.hypot(x - BAZAAR.x, z - BAZAAR.z), BAZAAR.r + 5, BAZAAR.r),
+    ramp(Math.hypot(x - ARENA.x, z - ARENA.z), ARENA.r + 6, ARENA.r + 1),
+    ramp(Math.hypot(x - DEX_MASTER.x, z - DEX_MASTER.z), DEX_MASTER.r + 4, DEX_MASTER.r),
   );
-  const inland = lerp(rolling, flat, flatten);
+  let inland = lerp(rolling, flat, flatten);
+  inland = lerp(inland, PLAZA_Y, ramp(Math.hypot(x - PLAZA.x, z - PLAZA.z), PLAZA.r + 3, PLAZA.r - 0.5));
+  inland = lerp(inland, ARENA_Y, ramp(Math.hypot(x - ARENA.x, z - ARENA.z), ARENA.r + 4, ARENA.r));
+  inland = lerp(inland, DEX_MASTER_Y, ramp(Math.hypot(x - DEX_MASTER.x, z - DEX_MASTER.z), DEX_MASTER.r + 3, DEX_MASTER.r));
 
   const sea = lerp(-5, 0.6, ramp(t, 1.12, 0.98));
   let h = lerp(sea, inland, ramp(t, 0.92, 0.72));
 
   const dc = Math.hypot(x - CAVE.x, z - CAVE.z);
   if (dc < CAVE.outer + 6) h = lerp(h, CAVE.floorY, ramp(dc, CAVE.outer + 6, CAVE.outer - 4));
+
+  const w = inlandWater(x, z);
+  if (w > 0) h = Math.min(h, lerp(h, WATER_BED, w));
   return h;
 }
 
@@ -310,6 +357,8 @@ export function randomLandPoint(rnd: () => number, margin = 7): { x: number; z: 
     if (terrainHeight(x, z) < 1.4) continue;
     if (Math.hypot(x - CAVE.x, z - CAVE.z) < CAVE.outer + margin + 2) continue;
     if (Math.hypot(x - BAZAAR.x, z - BAZAAR.z) < BAZAAR.r + 3) continue;
+    if (Math.hypot(x - ARENA.x, z - ARENA.z) < ARENA.r + 2) continue;
+    if (Math.hypot(x - DEX_MASTER.x, z - DEX_MASTER.z) < DEX_MASTER.r + 2) continue;
     let ok = true;
     for (let k = 0; k < 8 && ok; k++) {
       const b = (k / 8) * Math.PI * 2;

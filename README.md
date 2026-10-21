@@ -60,14 +60,18 @@ server/
   fair.ts          Secret/commitment/HMAC rolls (node:crypto)
   store.ts         Players, waitlist, dex (SQLite)
   market.ts        Critter Market (swaps + token sales)
-  arena.ts         Bot duels for the Ranks board
+  arena.ts         Turn-based battles vs bot trainers (server-authoritative sessions)
   api.ts           REST API + admin endpoints
   chain/           ChainProvider interface, MockChain, SolanaChain
   cards/           CardProvider interface, MockCards, HttpCards, placeholder slab art
 src/               Frontend (Vite + TS + Three.js, plain CSS)
   main.ts          Wires landing page ↔ game ↔ panels
   game/            Renderer, island builder, critter meshes, input, net, audio
-  panels.ts        Dex / Ranks / Arena / Market / waitlist / claim modals
+  panels.ts        Dex / Ranks / Arena / Market / waitlist / claim modals (+ panels-dex.css)
+  chat.ts          Bottom-left chat log + input
+  game/hand.ts     First-person glove holding the selected orb
+  game/orbs.ts     Original pink puff orb + golden ball models, light beams
+  game/minimap.ts  Circular north-up minimap
   verify.ts        In-browser provably-fair verifier
   admin.ts         Operator console (admin.html)
 scripts/           Tests and dev tools
@@ -83,7 +87,7 @@ scripts/           Tests and dev tools
 | `DB_PATH` | `./data/game.db` | SQLite file. Put it on a persistent volume. |
 | `LAUNCH_AT` | – | ISO date for the "time until launch" countdown |
 | `LAUNCHED` | `false` | Initial launch state; the admin toggle (stored in DB) wins afterwards |
-| `FEE_CLAIM_INTERVAL_SEC` | `180` | How often creator fees are claimed |
+| `FEE_CLAIM_INTERVAL_SEC` | `60` | How often creator fees are claimed (one golden drop per claim) |
 | `CARD_THRESHOLD_USD` | `10` | Vault size that triggers a card purchase |
 | `VAULT_SHARE` | `0.5` | Share of each claim sent to the USDC vault; the rest becomes golden balls |
 | `USD_PER_GOLDEN_BALL` | `0.25` | Fee value per golden ball |
@@ -109,7 +113,7 @@ from the schedule and shown on the page; it is not hard-coded.
 
 **Provably fair.**
 1. On release the server generates a 32-byte `secret`, publishes `sha256(secret)` (over the raw bytes, hex) and writes it in an on-chain memo.
-2. Throw `i` wins if `HMAC-SHA256(key = secret bytes, msg = "cardId:i")` → first 13 hex chars (52 bits) ÷ 2⁵² is below that throw's odds.
+2. Throw `i` wins if `HMAC-SHA256(key = secret bytes, msg = "cardId:i")`, read as a 256-bit integer and divided by 2²⁵⁶, is below that throw's odds.
 3. After the catch the secret is revealed. `#verify` recomputes the commitment and every roll with WebCrypto and checks that the winner was the *first* winning roll.
 
 **Server-authoritative.** The server owns golden ball inventory, pickups, card position, hits and rolls. Creature
@@ -125,6 +129,17 @@ same network shares the existing spot. The bonus is granted once, on first join 
 land for about 7s every 40s), 6 Cave (inside the crystal mountain, NE). Each region has one legendary that only spawns
 during 5-minute timed events (every 2–5h, or triggered from admin). Catch chance depends on rarity. The first catch of each
 species is locked in your dex and can never be traded.
+
+**Catching.** A pink orb that hits a critter pulls it in; the orb wobbles three times (2.6s) before the server
+reveals the result, and the critter can't be targeted while it's inside. Catches of new species update your title
+(Ocean/Sky/Cave Master, Dex Master for the 30-species island dex, Grand Master for everything), which shows above
+your avatar and in chat. Island-dex finishers scroll in the HUD's "Dex masters" ticker.
+
+**Arena.** Pick up to 3 of your critters for a turn-based battle against a bot trainer. Each species has HP/ATK/DEF/SPD,
+a level (5 + 3 per extra copy, max 50) and 4 moves; the server resolves every turn. Wins give 3 arena points, losses 1.
+
+**Chat.** Enter to type, Enter to send. Max 140 characters, 1 message per second (5 per 10s), control characters stripped.
+The last 40 lines live in memory and are sent to new connections; big events (drops, cards, legendaries) post system lines.
 
 **Market.** Swaps settle instantly. Sales: the seller pastes a payout wallet, the buyer sends `TOKEN_MINT` tokens to it and
 submits the signature, and the server verifies the token balance change on-chain before handing over the critter.

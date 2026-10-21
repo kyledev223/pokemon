@@ -11,7 +11,7 @@ export const CONFIG = {
   launchedDefault: env.LAUNCHED === 'true',
   launchAt: env.LAUNCH_AT || '',
 
-  feeClaimIntervalSec: num(env.FEE_CLAIM_INTERVAL_SEC, 180),
+  feeClaimIntervalSec: num(env.FEE_CLAIM_INTERVAL_SEC, 60),
   cardThresholdUsd: num(env.CARD_THRESHOLD_USD, 10),
   vaultShare: num(env.VAULT_SHARE, 0.5),
   usdPerGoldenBall: num(env.USD_PER_GOLDEN_BALL, 0.25),

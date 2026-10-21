@@ -1,4 +1,5 @@
 import type { Economy, PublicCard, WonCard, YouInfo } from '../shared/protocol';
+import type { Move } from '../shared/species';
 
 const TOKEN_KEY = 'cove.token';
 const NAME_KEY = 'cove.name';
@@ -54,6 +55,7 @@ export interface Status {
   launched: boolean;
   launchAt: string | null;
   tokenMint: string | null;
+  vaultWallet: string | null;
   explorerSuffix: string;
   economy: Economy;
   card: PublicCard | null;
@@ -126,9 +128,24 @@ export const api = {
     req<Offer>('POST', '/api/market/offers', { token: token(), ...o }),
   acceptOffer: (id: number, b: { critterId?: number; txSig?: string }) => req('POST', `/api/market/offers/${id}/accept`, { token: token(), ...b }),
   cancelOffer: (id: number) => req('POST', `/api/market/offers/${id}/cancel`, { token: token() }),
-  duel: (critters: number[]) =>
-    req<{ foeName: string; you: number[]; foe: number[]; log: string[]; won: boolean; points: number }>('POST', '/api/arena/duel', {
-      token: token(),
-      critters,
-    }),
+  arenaStart: (critters: number[]) => req<{ battleId: string; foeName: string; state: BattleState }>('POST', '/api/arena/start', { token: token(), critters }),
+  arenaMove: (battleId: string, move: number) =>
+    req<{ log: string[]; state: BattleState; done: boolean; won?: boolean; points?: number }>('POST', '/api/arena/move', { token: token(), battleId, move }),
 };
+
+export interface FighterView {
+  species: number;
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  moves: Move[];
+}
+
+export interface BattleState {
+  you: FighterView | null;
+  foe: FighterView | null;
+  yourTeam: { species: number; hp: number; maxHp: number }[];
+  foeTeam: { species: number; hp: number; maxHp: number }[];
+  turn: number;
+}

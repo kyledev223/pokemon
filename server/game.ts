@@ -8,7 +8,7 @@ import type { ChainProvider } from './chain/types';
 import type { CardProvider } from './cards/types';
 import { BRAND } from '../shared/brand';
 import { oddsForThrow } from '../shared/fair';
-import { CATCH_RATE, SPAWN_WEIGHT, SPECIES, speciesById, type Region } from '../shared/species';
+import { BASE_DEX_SIZE, CATCH_RATE, REGIONS, REGION_LABEL, SPAWN_WEIGHT, SPECIES, speciesById, type Region } from '../shared/species';
 import {
   CARD_HIT_RADIUS,
   EYE_HEIGHT,
@@ -32,7 +32,7 @@ import {
   type SpawnInfo,
   type Vec3,
 } from '../shared/world';
-import type { Ball, ClientMsg, Economy, EventInfo, PlayerPos, PublicCard, ServerMsg, YouInfo } from '../shared/protocol';
+import type { Ball, ChatLine, ClientMsg, Economy, EventInfo, PlayerPos, PublicCard, ServerMsg, YouInfo } from '../shared/protocol';
 
 export interface CardRow {
   id: string;
@@ -64,6 +64,8 @@ interface Conn {
   ws: WebSocket;
   ip: string;
   player: PlayerRow | null;
+  title: string | null;
+  chatTimes: number[];
   pos: Vec3;
   ry: number;
   lastPosAt: number;
@@ -86,6 +88,9 @@ const REGION_KIND: Record<Region, CritterKind> = { base: 'land', ocean: 'ocean',
 const KIND_REGION: Record<CritterKind, Region> = { land: 'base', ocean: 'ocean', sky: 'sky', cave: 'cave' };
 const EVENT_MS = 5 * 60_000;
 const MAX_BALLS_ON_ISLAND = 300;
+/** How long an orb wobbles on the ground before the catch resolves (3 wobbles client side). */
+export const CATCH_WOBBLE_MS = 2_600;
+const CHAT_HISTORY = 40;
 
 export function imageUrl(row: { id: string; image: string }): string {
   return row.image.startsWith('mock:') ? `/api/cards/${row.id}/image.svg` : row.image;
@@ -104,6 +109,11 @@ export class Game {
   private buying = false;
   private releasing = false;
   private ballsDirty = false;
+  /** Critters currently inside a wobbling orb; they can't be targeted again. */
+  private catching = new Set<string>();
+  private chat: ChatLine[] = [];
+  private chatSeq = 0;
+  private dexMasters: string[] = [];
 
   constructor(
     readonly db: DB,
@@ -116,6 +126,7 @@ export class Game {
     this.vaultUsd = Number(kvGet(db, 'vault_usd') ?? 0);
     this.card = (db.prepare("SELECT * FROM cards WHERE status = 'in_play' LIMIT 1").get() as unknown as CardRow) ?? null;
     for (const b of JSON.parse(kvGet(db, 'balls') ?? '[]') as Ball[]) this.balls.set(b.id, b);
+    this.refreshDexMasters();
   }
 
   start(): void {
@@ -137,6 +148,8 @@ export class Game {
       ws,
       ip,
       player: null,
+      title: null,
+      chatTimes: [],
       pos: { x: 0, y: 0, z: 0 },
       ry: 0,
       lastPosAt: Date.now(),
@@ -165,6 +178,7 @@ export class Game {
       card: this.card ? this.publicCard(this.card) : null,
       economy: this.economy(),
       event: this.event,
+      chat: this.chat,
     });
   }
 
@@ -193,6 +207,8 @@ export class Game {
         return this.onThrow(c, m);
       case 'pickup':
         return this.onPickup(c, m.id);
+      case 'chat':
+        return this.onChat(c, m.text);
       case 'ping':
         return this.send(c, { t: 'pong', c: m.c, now });
     }
@@ -209,6 +225,7 @@ export class Game {
       }
     }
     c.player = player;
+    c.title = this.titleFor(player.id);
     if (this.launched) {
       const bonus = this.store.grantLaunchBonus(player.id);
       if (bonus) this.toast(c, `🎁 Early-trainer bonus: ${bonus} golden balls landed in your bag!`, 'gold');
@@ -294,6 +311,7 @@ export class Game {
     if (!this.launched) return;
     let best: { s: SpawnInfo; t: number } | null = null;
     for (const s of this.critters.values()) {
+      if (this.catching.has(s.id)) continue;
       const size = speciesById(s.species).size;
       const p0 = critterPose(s, at);
       if (Math.hypot(p0.x - o.x, p0.z - o.z) > 90) continue;
@@ -302,10 +320,21 @@ export class Game {
     }
     if (!best) return;
     const { s, t } = best;
-    setTimeout(() => this.resolveCatch(player, s.id), Math.max(0, at + t * 1000 - Date.now()));
+    setTimeout(() => this.startCatch(player, s.id, at + t * 1000), Math.max(0, at + t * 1000 - Date.now()));
+  }
+
+  /** The orb landed on the critter: it gets pulled in and the orb wobbles before the result. */
+  private startCatch(player: PlayerRow, spawnId: string, hitAt: number): void {
+    const s = this.critters.get(spawnId);
+    if (!s || this.catching.has(spawnId)) return;
+    this.catching.add(spawnId);
+    const p = critterPose(s, hitAt);
+    this.broadcast({ t: 'catchStart', spawnId, byId: player.id, at: { x: p.x, y: p.y, z: p.z } });
+    setTimeout(() => this.resolveCatch(player, spawnId), CATCH_WOBBLE_MS);
   }
 
   private resolveCatch(player: PlayerRow, spawnId: string): void {
+    this.catching.delete(spawnId);
     const s = this.critters.get(spawnId);
     if (!s) return;
     const sp = speciesById(s.species);
@@ -319,8 +348,76 @@ export class Game {
     this.broadcast({ t: 'catch', ok: true, spawnId, species: s.species, by: player.name, byId: player.id, isNew });
     const conn = this.connFor(player.id);
     if (conn) this.send(conn, { t: 'dex', dex: this.store.dex(player.id) });
-    if (sp.rarity === 'legendary') this.broadcastToast(`🌟 ${player.name} caught the legendary ${sp.name}!`, 'gold');
-    if (isNew) this.checkMaster(player);
+    if (sp.rarity === 'legendary') {
+      this.broadcastToast(`🌟 ${player.name} caught the legendary ${sp.name}!`, 'gold');
+      this.systemChat(`🌟 ${player.name} caught the legendary ${sp.name}!`);
+    }
+    if (isNew) {
+      this.checkMaster(player);
+      this.onDexGrew(player.id, sp.region);
+    }
+  }
+
+  /** Titles and the dex-master ticker only change when someone catches a new species. */
+  private onDexGrew(playerId: string, region: Region): void {
+    const c = this.connFor(playerId);
+    if (c) c.title = this.titleFor(playerId);
+    if (region === 'base' && this.refreshDexMasters()) this.broadcastEconomy();
+  }
+
+  /** Highest title a trainer has earned, shown above their avatar and in chat. */
+  titleFor(playerId: string): string | null {
+    const dex = new Set(this.store.dex(playerId));
+    const done = (r: Region) => SPECIES.filter((s) => s.region === r).every((s) => dex.has(s.id));
+    if (dex.size === SPECIES.length) return 'Grand Master';
+    if (done('base')) return 'Dex Master';
+    const region = REGIONS.find((r) => r !== 'base' && done(r));
+    if (region) return `${REGION_LABEL[region]} Master`;
+    const cards = (this.db.prepare('SELECT COUNT(*) AS n FROM cards WHERE winner_id = ?').get(playerId) as Row).n as number;
+    return cards > 0 ? 'Card Catcher' : null;
+  }
+
+  /** Trainers with the full island dex, ordered by when they finished. Returns true when the list changed. */
+  private refreshDexMasters(): boolean {
+    const rows = this.db
+      .prepare(
+        `SELECT p.name AS name, MAX(f.first) AS done FROM (
+           SELECT owner_id, species, MIN(caught_at) AS first FROM critters WHERE species <= ? GROUP BY owner_id, species
+         ) f JOIN players p ON p.id = f.owner_id
+         GROUP BY f.owner_id HAVING COUNT(*) = ? ORDER BY done LIMIT 12`,
+      )
+      .all(BASE_DEX_SIZE, BASE_DEX_SIZE) as Row[];
+    const next = rows.map((r) => r.name as string);
+    const changed = next.join('\n') !== this.dexMasters.join('\n');
+    this.dexMasters = next;
+    return changed;
+  }
+
+  // ── Chat ──────────────────────────────────────────────────────────────
+
+  private onChat(c: Conn, raw: unknown): void {
+    if (!c.player || typeof raw !== 'string') return;
+    const text = raw
+      .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 140);
+    if (!text) return;
+    const now = Date.now();
+    c.chatTimes = c.chatTimes.filter((t) => now - t < 10_000);
+    if (c.chatTimes.length >= 5 || now - (c.chatTimes.at(-1) ?? 0) < 1_000) return this.toast(c, 'Easy there, one message per second.', 'warn');
+    c.chatTimes.push(now);
+    this.pushChat({ id: ++this.chatSeq, name: c.player.name, title: c.title, text, at: now });
+  }
+
+  systemChat(text: string): void {
+    this.pushChat({ id: ++this.chatSeq, name: BRAND.name, title: null, text, at: Date.now(), system: true });
+  }
+
+  private pushChat(line: ChatLine): void {
+    this.chat.push(line);
+    if (this.chat.length > CHAT_HISTORY) this.chat.shift();
+    this.broadcast({ t: 'chat', line });
   }
 
   private checkMaster(player: PlayerRow): void {
@@ -370,10 +467,14 @@ export class Game {
       .run(fresh.id, fresh.name, fresh.wallet, Date.now(), card.id);
     this.card = null;
     this.broadcast({ t: 'cardCaught', cardId: card.id, name: card.name, by: fresh.name, byId: fresh.id, secret: card.secret });
+    this.systemChat(`🎉 ${fresh.name} caught the real ${card.name} on hit #${card.throw_count}!`);
     this.broadcast({ t: 'card', card: null });
     this.broadcastEconomy();
     const conn = this.connFor(fresh.id);
-    if (conn) this.send(conn, { t: 'you', you: this.youInfo(fresh), spawn: conn.pos, mode: conn.mode });
+    if (conn) {
+      conn.title = this.titleFor(fresh.id);
+      this.send(conn, { t: 'you', you: this.youInfo(fresh), spawn: conn.pos, mode: conn.mode });
+    }
     if (fresh.wallet) void this.deliverCard(card.id);
     setTimeout(() => void this.releaseNext(), 8_000);
   }
@@ -412,6 +513,7 @@ export class Game {
     this.ballsDirty = true;
     this.send(c, { t: 'bag', gold: this.store.addGold(c.player.id, 1) });
     this.broadcast({ t: 'ball-', id });
+    this.broadcastEconomy();
   }
 
   spawnBalls(n: number): number {
@@ -426,6 +528,7 @@ export class Game {
     if (added.length) {
       this.ballsDirty = true;
       this.broadcast({ t: 'balls+', balls: added });
+      this.broadcastEconomy();
     }
     return added.length;
   }
@@ -456,6 +559,7 @@ export class Game {
           .prepare('INSERT INTO fee_claims (usd, sol, signature, balls, vault_usd, created_at) VALUES (?, ?, ?, ?, ?, ?)')
           .run(claim.usd, claim.sol, claim.signature, spawned, this.vaultUsd, Date.now());
         this.broadcastToast(`⚡ Creator fees claimed: ${spawned} golden balls just dropped on the island!`, 'gold');
+        this.systemChat(`⚡ Golden drop: ${spawned} golden balls landed on the island.`);
         this.log.info({ usd: claim.usd, balls: spawned, vault: this.vaultUsd }, 'fee claim');
       }
     } catch (e) {
@@ -527,6 +631,7 @@ export class Game {
       this.card = { ...next, status: 'in_play', secret, commitment, memo_sig: memoSig, seed, released_at: releasedAt };
       this.broadcast({ t: 'card', card: this.publicCard(this.card) });
       this.broadcastToast(`🃏 A real ${next.name} (${next.grade}) is roaming the island!`, 'gold');
+      this.systemChat(`🃏 A real ${next.name} (${next.grade}) is roaming. Commitment sha256 ${commitment.slice(0, 12)}…`);
     } finally {
       this.releasing = false;
     }
@@ -597,6 +702,7 @@ export class Game {
     this.event = { region: r, species: legend.id, endsAt: Date.now() + EVENT_MS };
     this.broadcast({ t: 'event', event: this.event });
     this.broadcastToast(`🌟 Legendary event! ${legend.name} appeared for 5 minutes.`, 'pink');
+    this.systemChat(`🌟 Legendary event: ${legend.name} appeared (${REGION_LABEL[r]}) for 5 minutes.`);
   }
 
   private endEvent(): void {
@@ -652,6 +758,8 @@ export class Game {
       nextClaimAt: this.nextClaimAt,
       online: this.onlineCount(),
       cardsCaught: (this.db.prepare("SELECT COUNT(*) AS n FROM cards WHERE status IN ('caught','claimed')").get() as Row).n as number,
+      balls: this.balls.size,
+      dexMasters: this.dexMasters,
     };
   }
 
@@ -662,7 +770,7 @@ export class Game {
   private playerList(): PlayerPos[] {
     const out: PlayerPos[] = [];
     for (const c of this.conns) {
-      if (c.player) out.push({ id: c.player.id, name: c.player.name, x: c.pos.x, y: c.pos.y, z: c.pos.z, ry: c.ry });
+      if (c.player) out.push({ id: c.player.id, name: c.player.name, title: c.title, x: c.pos.x, y: c.pos.y, z: c.pos.z, ry: c.ry });
     }
     return out;
   }
@@ -678,6 +786,7 @@ export class Game {
     const p = this.store.playerById(playerId);
     if (!c || !p) return;
     c.player = p;
+    c.title = this.titleFor(playerId);
     this.send(c, { t: 'dex', dex: this.store.dex(playerId) });
     this.send(c, { t: 'bag', gold: p.gold });
   }

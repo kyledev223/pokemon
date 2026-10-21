@@ -35,6 +35,7 @@ export interface WonCard {
 export interface PlayerPos {
   id: string;
   name: string;
+  title: string | null;
   x: number;
   y: number;
   z: number;
@@ -55,6 +56,20 @@ export interface Economy {
   nextClaimAt: number;
   online: number;
   cardsCaught: number;
+  /** Golden balls currently lying on the island. */
+  balls: number;
+  /** Trainers who completed the 30-species island dex, earliest first. */
+  dexMasters: string[];
+}
+
+export interface ChatLine {
+  id: number;
+  name: string;
+  title: string | null;
+  text: string;
+  at: number;
+  /** System lines (catches, drops) have no author. */
+  system?: boolean;
 }
 
 export interface EventInfo {
@@ -80,6 +95,7 @@ export type ClientMsg =
   | { t: 'pos'; x: number; y: number; z: number; ry: number }
   | { t: 'throw'; kind: ThrowKind; o: Vec3; d: Vec3; at: number }
   | { t: 'pickup'; id: string }
+  | { t: 'chat'; text: string }
   | { t: 'ping'; c: number };
 
 export type ServerMsg =
@@ -92,6 +108,7 @@ export type ServerMsg =
       card: PublicCard | null;
       economy: Economy;
       event: EventInfo | null;
+      chat: ChatLine[];
     }
   | { t: 'you'; you: YouInfo; spawn: Vec3; mode: 'lobby' | 'island' }
   | { t: 'players'; list: PlayerPos[] }
@@ -100,6 +117,8 @@ export type ServerMsg =
   | { t: 'ball-'; id: string }
   | { t: 'critter+'; spawns: SpawnInfo[] }
   | { t: 'critter-'; id: string }
+  /** A pink orb hit a critter; the orb wobbles until the matching 'catch' arrives. */
+  | { t: 'catchStart'; spawnId: string; byId: string; at: Vec3 }
   | { t: 'catch'; ok: boolean; spawnId: string; species: number; by: string; byId: string; isNew: boolean }
   | { t: 'card'; card: PublicCard | null }
   | { t: 'cardHit'; cardId: string; index: number; odds: number; by: string; byId: string; won: boolean }
@@ -111,4 +130,5 @@ export type ServerMsg =
   | { t: 'toast'; text: string; tone: 'info' | 'gold' | 'pink' | 'warn' }
   | { t: 'correct'; x: number; y: number; z: number }
   | { t: 'event'; event: EventInfo | null }
+  | { t: 'chat'; line: ChatLine }
   | { t: 'pong'; c: number; now: number };
